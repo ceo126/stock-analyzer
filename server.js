@@ -11,6 +11,10 @@ app.use(cors());
 app.use(express.json({ limit: '5mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
+if (!process.env.GEMINI_API_KEY) {
+  console.error('GEMINI_API_KEY가 .env에 설정되어 있지 않습니다.');
+  process.exit(1);
+}
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 // Yahoo Finance v8 chart API로 quote + 차트 데이터 통합 조회
@@ -22,6 +26,10 @@ async function fetchYahooData(symbol, range = '6mo') {
   const res = await fetch(url, {
     headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
   });
+  if (!res.ok) {
+    if (res.status === 429) throw new Error('요청이 너무 많습니다. 잠시 후 다시 시도해주세요.');
+    throw new Error(`Yahoo Finance 요청 실패 (${res.status})`);
+  }
   const data = await res.json();
   const chart = data?.chart?.result?.[0];
   if (!chart) throw new Error('종목을 찾을 수 없습니다');
@@ -62,8 +70,6 @@ async function fetchYahooData(symbol, range = '6mo') {
       marketCap: meta.marketCap || null,
       fiftyTwoWeekHigh: meta.fiftyTwoWeekHigh,
       fiftyTwoWeekLow: meta.fiftyTwoWeekLow,
-      fiftyDayAverage: meta.fiftyDayAverage,
-      twoHundredDayAverage: meta.twoHundredDayAverage,
       previousClose: prevClose,
       currency: meta.currency,
       exchange: meta.fullExchangeName || meta.exchangeName
@@ -76,7 +82,8 @@ async function fetchYahooData(symbol, range = '6mo') {
 app.get('/api/stock/:symbol', async (req, res) => {
   try {
     let symbol = req.params.symbol.toUpperCase();
-    const period = req.query.period || '6mo';
+    const validPeriods = ['5d', '1mo', '3mo', '6mo', '1y', '2y'];
+    const period = validPeriods.includes(req.query.period) ? req.query.period : '6mo';
 
     if (/^\d{6}$/.test(symbol)) {
       symbol = symbol + '.KS';
@@ -130,6 +137,9 @@ app.get('/api/search', async (req, res) => {
 app.post('/api/analyze', async (req, res) => {
   try {
     const { symbol, quote, chartData } = req.body;
+    if (!symbol || !quote || !Array.isArray(chartData) || chartData.length === 0) {
+      return res.status(400).json({ success: false, error: '유효하지 않은 요청 데이터입니다.' });
+    }
 
     const priceList = chartData.slice(-60).map(d => ({
       date: new Date(d.date).toLocaleDateString('ko-KR'),
@@ -166,7 +176,7 @@ app.post('/api/analyze', async (req, res) => {
       BB_Upper: round2(bb.upper),
       BB_Middle: round2(bb.middle),
       BB_Lower: round2(bb.lower),
-      BB_Width: round2(((bb.upper - bb.lower) / bb.middle) * 100),
+      BB_Width: bb.middle !== 0 ? round2(((bb.upper - bb.lower) / bb.middle) * 100) : 0,
       Stochastic_K: round2(stoch.k),
       Stochastic_D: round2(stoch.d),
       현재가: round2(latestClose),
@@ -234,16 +244,6 @@ function calcMA(data, period) {
   if (data.length < period) return data[data.length - 1] || 0;
   const slice = data.slice(-period);
   return slice.reduce((a, b) => a + b, 0) / period;
-}
-
-function calcEMA(data, period) {
-  if (data.length < period) return data[data.length - 1] || 0;
-  const k = 2 / (period + 1);
-  let ema = data.slice(0, period).reduce((a, b) => a + b, 0) / period;
-  for (let i = period; i < data.length; i++) {
-    ema = data[i] * k + ema * (1 - k);
-  }
-  return ema;
 }
 
 function calcRSI(data, period = 14) {

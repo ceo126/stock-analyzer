@@ -33,9 +33,13 @@ async function searchSymbols(query) {
 }
 
 function escapeHtml(str) {
-  const div = document.createElement('div');
-  div.textContent = str;
-  return div.innerHTML;
+  if (str == null) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function showDropdown(results) {
@@ -252,7 +256,6 @@ function renderChart(chartData) {
   });
 
   // 볼린저밴드 (배경 영역)
-  const closes = chartData.map(d => d.close);
   const bbData = calcBBArray(chartData, 20);
   if (bbData.length > 0) {
     const bbUpperSeries = priceChart.addLineSeries({
@@ -435,7 +438,17 @@ function getMAAlignmentDesc(ind) {
 }
 
 function renderAnalysis(markdown) {
-  document.getElementById('analysisContent').innerHTML = marked.parse(markdown);
+  const renderer = new marked.Renderer();
+  const parsed = marked.parse(markdown, {
+    renderer,
+    breaks: true,
+  });
+  // 스크립트 태그 제거 (AI 응답 XSS 방지)
+  const sanitized = parsed
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+    .replace(/on\w+\s*=\s*"[^"]*"/gi, '')
+    .replace(/on\w+\s*=\s*'[^']*'/gi, '');
+  document.getElementById('analysisContent').innerHTML = sanitized;
   document.getElementById('analysisSection').classList.remove('hidden');
 }
 
