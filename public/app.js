@@ -3,11 +3,7 @@ let currentChartData = [];
 let currentQuote = null;
 let priceChart = null;
 let volumeChart = null;
-let candleSeries = null;
-let ma5Series = null;
-let ma20Series = null;
-let ma60Series = null;
-let volumeSeries = null;
+let resizeObserverRef = null;
 
 // 엔터 키 처리
 const symbolInput = document.getElementById('symbolInput');
@@ -36,6 +32,12 @@ async function searchSymbols(query) {
   } catch { hideDropdown(); }
 }
 
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
 function showDropdown(results) {
   let dropdown = document.getElementById('searchDropdown');
   if (!dropdown) {
@@ -45,24 +47,25 @@ function showDropdown(results) {
     symbolInput.parentElement.appendChild(dropdown);
   }
   dropdown.innerHTML = results.map(r => `
-    <div class="dropdown-item" onclick="selectResult('${r.symbol}')">
-      <span class="dropdown-symbol">${r.symbol}</span>
-      <span class="dropdown-name">${r.name}</span>
-      <span class="dropdown-exchange">${r.exchange || ''}</span>
+    <div class="dropdown-item" data-symbol="${escapeHtml(r.symbol)}">
+      <span class="dropdown-symbol">${escapeHtml(r.symbol)}</span>
+      <span class="dropdown-name">${escapeHtml(r.name)}</span>
+      <span class="dropdown-exchange">${escapeHtml(r.exchange || '')}</span>
     </div>
   `).join('');
+  dropdown.querySelectorAll('.dropdown-item').forEach(item => {
+    item.addEventListener('click', () => {
+      symbolInput.value = item.dataset.symbol;
+      hideDropdown();
+      analyzeStock();
+    });
+  });
   dropdown.classList.add('show');
 }
 
 function hideDropdown() {
   const dropdown = document.getElementById('searchDropdown');
   if (dropdown) dropdown.classList.remove('show');
-}
-
-function selectResult(sym) {
-  symbolInput.value = sym;
-  hideDropdown();
-  analyzeStock();
 }
 
 document.addEventListener('click', (e) => {
@@ -74,7 +77,12 @@ document.querySelectorAll('.period-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('.period-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
-    if (currentSymbol) fetchStockData(currentSymbol, btn.dataset.period);
+    if (currentSymbol) {
+      showChartLoading(true);
+      fetchStockData(currentSymbol, btn.dataset.period)
+        .catch(err => showError(err.message))
+        .finally(() => showChartLoading(false));
+    }
   });
 });
 
@@ -144,14 +152,33 @@ async function fetchAnalysis() {
   renderAnalysis(data.analysis);
 }
 
+// 재분석
+async function reAnalyze() {
+  const btn = document.getElementById('reAnalyzeBtn');
+  btn.disabled = true;
+  btn.textContent = '분석 중...';
+  try {
+    await fetchAnalysis();
+  } catch (err) {
+    showError(err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '재분석';
+  }
+}
+
 function renderSummary(quote, symbol) {
   const changeClass = quote.change >= 0 ? 'up' : 'down';
   const changeSign = quote.change >= 0 ? '+' : '';
 
+  // 52주 대비 위치 (%)
+  const range52 = quote.fiftyTwoWeekHigh - quote.fiftyTwoWeekLow;
+  const position52 = range52 > 0 ? ((quote.price - quote.fiftyTwoWeekLow) / range52) * 100 : 50;
+
   document.getElementById('stockSummary').innerHTML = `
     <div class="stock-name-block">
-      <div class="stock-name">${quote.name}</div>
-      <div class="stock-symbol">${symbol} · ${quote.exchange}</div>
+      <div class="stock-name">${escapeHtml(quote.name)}</div>
+      <div class="stock-symbol">${escapeHtml(symbol)} · ${escapeHtml(quote.exchange)}</div>
     </div>
     <div class="stock-price-block">
       <div class="stock-price">${formatNumber(quote.price)} ${quote.currency || ''}</div>
@@ -162,37 +189,47 @@ function renderSummary(quote, symbol) {
     <div class="stock-meta">
       <div class="meta-item">
         <span class="meta-label">시가총액</span>
-        <span class="meta-value">${formatMarketCap(quote.marketCap)}</span>
-      </div>
-      <div class="meta-item">
-        <span class="meta-label">52주 최고</span>
-        <span class="meta-value">${formatNumber(quote.fiftyTwoWeekHigh)}</span>
-      </div>
-      <div class="meta-item">
-        <span class="meta-label">52주 최저</span>
-        <span class="meta-value">${formatNumber(quote.fiftyTwoWeekLow)}</span>
-      </div>
-      <div class="meta-item">
-        <span class="meta-label">PER</span>
-        <span class="meta-value">${quote.trailingPE?.toFixed(1) || 'N/A'}</span>
+        <span class="meta-value">${formatMarketCap(quote.marketCap, quote.currency)}</span>
       </div>
       <div class="meta-item">
         <span class="meta-label">거래량</span>
         <span class="meta-value">${formatVolume(quote.volume)}</span>
       </div>
-      <div class="meta-item">
-        <span class="meta-label">배당률</span>
-        <span class="meta-value">${quote.dividendYield ? (quote.dividendYield * 100).toFixed(2) + '%' : 'N/A'}</span>
+      <div class="meta-item meta-item-wide">
+        <span class="meta-label">52주 범위</span>
+        <div class="range-52w">
+          <span class="range-low">${formatNumber(quote.fiftyTwoWeekLow)}</span>
+          <div class="range-bar">
+            <div class="range-fill" style="width: ${Math.min(100, Math.max(0, position52))}%"></div>
+            <div class="range-marker" style="left: ${Math.min(100, Math.max(0, position52))}%"></div>
+          </div>
+          <span class="range-high">${formatNumber(quote.fiftyTwoWeekHigh)}</span>
+        </div>
       </div>
     </div>
   `;
 }
 
+function cleanupCharts() {
+  if (resizeObserverRef) {
+    resizeObserverRef.disconnect();
+    resizeObserverRef = null;
+  }
+  if (priceChart) {
+    priceChart.remove();
+    priceChart = null;
+  }
+  if (volumeChart) {
+    volumeChart.remove();
+    volumeChart = null;
+  }
+}
+
 function renderChart(chartData) {
+  cleanupCharts();
+
   const priceContainer = document.getElementById('priceChart');
   const volumeContainer = document.getElementById('volumeChart');
-  priceContainer.innerHTML = '';
-  volumeContainer.innerHTML = '';
 
   // 가격 차트
   priceChart = LightweightCharts.createChart(priceContainer, {
@@ -214,8 +251,30 @@ function renderChart(chartData) {
     },
   });
 
+  // 볼린저밴드 (배경 영역)
+  const closes = chartData.map(d => d.close);
+  const bbData = calcBBArray(chartData, 20);
+  if (bbData.length > 0) {
+    const bbUpperSeries = priceChart.addLineSeries({
+      color: 'rgba(123,97,255,0.3)',
+      lineWidth: 1,
+      lineStyle: 2,
+      title: 'BB Upper',
+      crosshairMarkerVisible: false,
+    });
+    const bbLowerSeries = priceChart.addLineSeries({
+      color: 'rgba(123,97,255,0.3)',
+      lineWidth: 1,
+      lineStyle: 2,
+      title: 'BB Lower',
+      crosshairMarkerVisible: false,
+    });
+    bbUpperSeries.setData(bbData.map(d => ({ time: d.time, value: d.upper })));
+    bbLowerSeries.setData(bbData.map(d => ({ time: d.time, value: d.lower })));
+  }
+
   // 캔들스틱
-  candleSeries = priceChart.addCandlestickSeries({
+  const candleSeries = priceChart.addCandlestickSeries({
     upColor: '#22c55e',
     downColor: '#ef4444',
     borderDownColor: '#ef4444',
@@ -224,25 +283,28 @@ function renderChart(chartData) {
     wickUpColor: '#22c55e',
   });
 
-  const candleData = chartData.map(d => ({
+  candleSeries.setData(chartData.map(d => ({
     time: toChartTime(d.date),
     open: d.open,
     high: d.high,
     low: d.low,
     close: d.close,
-  }));
-  candleSeries.setData(candleData);
+  })));
 
   // 이동평균선
-  const closes = chartData.map(d => d.close);
+  const maConfigs = [
+    { period: 5, color: '#eab308', title: 'MA5' },
+    { period: 20, color: '#3b82f6', title: 'MA20' },
+    { period: 60, color: '#a855f7', title: 'MA60' },
+    { period: 120, color: '#ef4444', title: 'MA120' },
+  ];
 
-  ma5Series = priceChart.addLineSeries({ color: '#eab308', lineWidth: 1, title: 'MA5' });
-  ma20Series = priceChart.addLineSeries({ color: '#3b82f6', lineWidth: 1, title: 'MA20' });
-  ma60Series = priceChart.addLineSeries({ color: '#a855f7', lineWidth: 1, title: 'MA60' });
-
-  ma5Series.setData(calcMAArray(chartData, 5));
-  ma20Series.setData(calcMAArray(chartData, 20));
-  ma60Series.setData(calcMAArray(chartData, 60));
+  maConfigs.forEach(({ period, color, title }) => {
+    if (chartData.length >= period) {
+      const series = priceChart.addLineSeries({ color, lineWidth: 1, title });
+      series.setData(calcMAArray(chartData, period));
+    }
+  });
 
   priceChart.timeScale().fitContent();
 
@@ -262,7 +324,7 @@ function renderChart(chartData) {
     timeScale: { visible: false },
   });
 
-  volumeSeries = volumeChart.addHistogramSeries({
+  const volumeSeries = volumeChart.addHistogramSeries({
     priceFormat: { type: 'volume' },
   });
 
@@ -280,11 +342,11 @@ function renderChart(chartData) {
   });
 
   // 리사이즈
-  const resizeObserver = new ResizeObserver(() => {
-    priceChart.applyOptions({ width: priceContainer.clientWidth });
-    volumeChart.applyOptions({ width: volumeContainer.clientWidth });
+  resizeObserverRef = new ResizeObserver(() => {
+    if (priceChart) priceChart.applyOptions({ width: priceContainer.clientWidth });
+    if (volumeChart) volumeChart.applyOptions({ width: volumeContainer.clientWidth });
   });
-  resizeObserver.observe(priceContainer);
+  resizeObserverRef.observe(priceContainer);
 }
 
 function renderIndicators(indicators) {
@@ -300,8 +362,14 @@ function renderIndicators(indicators) {
     {
       label: 'MACD',
       value: indicators.MACD,
-      cls: indicators.MACD > indicators.MACD_Signal ? 'bullish' : 'bearish',
-      desc: indicators.MACD > indicators.MACD_Signal ? '매수 시그널' : '매도 시그널'
+      cls: indicators.MACD_Histogram > 0 ? 'bullish' : 'bearish',
+      desc: `시그널: ${indicators.MACD_Signal} / 히스토그램: ${indicators.MACD_Histogram > 0 ? '+' : ''}${indicators.MACD_Histogram}`
+    },
+    {
+      label: '스토캐스틱',
+      value: `${indicators.Stochastic_K} / ${indicators.Stochastic_D}`,
+      cls: indicators.Stochastic_K > 80 ? 'bearish' : indicators.Stochastic_K < 20 ? 'bullish' : 'neutral',
+      desc: indicators.Stochastic_K > 80 ? '과매수 구간' : indicators.Stochastic_K < 20 ? '과매도 구간' : '중립 구간'
     },
     {
       label: '5일 이평선',
@@ -316,16 +384,26 @@ function renderIndicators(indicators) {
       desc: indicators.현재가 > indicators.MA20 ? '중기 상승 추세' : '중기 하락 추세'
     },
     {
-      label: '볼린저 상단',
-      value: formatNumber(indicators.BB_Upper),
-      cls: indicators.현재가 > indicators.BB_Upper ? 'bearish' : 'neutral',
-      desc: indicators.현재가 > indicators.BB_Upper ? '상단 돌파 (과열)' : '상단 미만'
+      label: '볼린저밴드',
+      value: `폭 ${indicators.BB_Width}%`,
+      cls: indicators.현재가 > indicators.BB_Upper ? 'bearish' :
+           indicators.현재가 < indicators.BB_Lower ? 'bullish' : 'neutral',
+      desc: indicators.현재가 > indicators.BB_Upper ? '상단 돌파 (과열)' :
+            indicators.현재가 < indicators.BB_Lower ? '하단 이탈 (반등 기대)' :
+            `${formatNumber(indicators.BB_Lower)} ~ ${formatNumber(indicators.BB_Upper)}`
     },
     {
-      label: '볼린저 하단',
-      value: formatNumber(indicators.BB_Lower),
-      cls: indicators.현재가 < indicators.BB_Lower ? 'bullish' : 'neutral',
-      desc: indicators.현재가 < indicators.BB_Lower ? '하단 이탈 (반등 기대)' : '하단 이상'
+      label: '거래량',
+      value: `${indicators.거래량비율}x`,
+      cls: indicators.거래량비율 > 2 ? 'bullish' : indicators.거래량비율 < 0.5 ? 'bearish' : 'neutral',
+      desc: indicators.거래량비율 > 2 ? '평균 대비 급증' :
+            indicators.거래량비율 < 0.5 ? '평균 대비 부진' : '20일 평균 대비'
+    },
+    {
+      label: '이평선 배열',
+      value: getMAAlignment(indicators),
+      cls: getMAAlignmentClass(indicators),
+      desc: getMAAlignmentDesc(indicators)
     }
   ];
 
@@ -338,27 +416,58 @@ function renderIndicators(indicators) {
   `).join('');
 }
 
+function getMAAlignment(ind) {
+  if (ind.MA5 > ind.MA20 && ind.MA20 > ind.MA60) return '정배열';
+  if (ind.MA5 < ind.MA20 && ind.MA20 < ind.MA60) return '역배열';
+  return '혼조';
+}
+
+function getMAAlignmentClass(ind) {
+  if (ind.MA5 > ind.MA20 && ind.MA20 > ind.MA60) return 'bullish';
+  if (ind.MA5 < ind.MA20 && ind.MA20 < ind.MA60) return 'bearish';
+  return 'neutral';
+}
+
+function getMAAlignmentDesc(ind) {
+  if (ind.MA5 > ind.MA20 && ind.MA20 > ind.MA60) return '강한 상승 추세';
+  if (ind.MA5 < ind.MA20 && ind.MA20 < ind.MA60) return '강한 하락 추세';
+  return '추세 전환 가능성';
+}
+
 function renderAnalysis(markdown) {
   document.getElementById('analysisContent').innerHTML = marked.parse(markdown);
   document.getElementById('analysisSection').classList.remove('hidden');
 }
 
-// 유틸리티
+// --- 유틸리티 ---
+
 function toChartTime(dateStr) {
-  const d = new Date(dateStr);
-  return Math.floor(d.getTime() / 1000);
+  return Math.floor(new Date(dateStr).getTime() / 1000);
 }
 
 function calcMAArray(data, period) {
   const result = [];
-  for (let i = period - 1; i < data.length; i++) {
-    let sum = 0;
-    for (let j = i - period + 1; j <= i; j++) {
-      sum += data[j].close;
+  let sum = 0;
+  for (let i = 0; i < data.length; i++) {
+    sum += data[i].close;
+    if (i >= period) sum -= data[i - period].close;
+    if (i >= period - 1) {
+      result.push({ time: toChartTime(data[i].date), value: sum / period });
     }
+  }
+  return result;
+}
+
+function calcBBArray(data, period) {
+  const result = [];
+  for (let i = period - 1; i < data.length; i++) {
+    const slice = data.slice(i - period + 1, i + 1).map(d => d.close);
+    const mean = slice.reduce((a, b) => a + b, 0) / period;
+    const std = Math.sqrt(slice.reduce((s, v) => s + Math.pow(v - mean, 2), 0) / period);
     result.push({
       time: toChartTime(data[i].date),
-      value: sum / period
+      upper: mean + 2 * std,
+      lower: mean - 2 * std
     });
   }
   return result;
@@ -369,10 +478,14 @@ function formatNumber(num) {
   return Number(num).toLocaleString('ko-KR', { maximumFractionDigits: 2 });
 }
 
-function formatMarketCap(cap) {
+function formatMarketCap(cap, currency) {
   if (!cap) return 'N/A';
-  if (cap >= 1e12) return (cap / 1e12).toFixed(1) + '조';
-  if (cap >= 1e8) return (cap / 1e8).toFixed(0) + '억';
+  if (currency === 'KRW') {
+    if (cap >= 1e12) return (cap / 1e12).toFixed(1) + '조';
+    if (cap >= 1e8) return (cap / 1e8).toFixed(0) + '억';
+    return cap.toLocaleString() + '원';
+  }
+  if (cap >= 1e12) return (cap / 1e12).toFixed(2) + 'T';
   if (cap >= 1e9) return (cap / 1e9).toFixed(1) + 'B';
   if (cap >= 1e6) return (cap / 1e6).toFixed(1) + 'M';
   return cap.toLocaleString();
@@ -388,6 +501,13 @@ function formatVolume(vol) {
 function show(id) { document.getElementById(id).classList.remove('hidden'); }
 function hide(id) { document.getElementById(id).classList.add('hidden'); }
 function setText(id, text) { document.getElementById(id).textContent = text; }
+
+function showChartLoading(on) {
+  const container = document.querySelector('.chart-container');
+  if (!container) return;
+  if (on) container.classList.add('chart-loading');
+  else container.classList.remove('chart-loading');
+}
 
 function showError(msg) {
   const el = document.getElementById('error');

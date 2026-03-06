@@ -39,9 +39,15 @@ async function fetchYahooData(symbol, range = '6mo') {
     volume: ohlcv.volume?.[i]
   })).filter(d => d.close != null);
 
-  // 전일 대비 계산 (차트 데이터 기반)
+  // 전일 대비 계산 - 일봉 기준으로 정확한 전일 종가 사용
   const currentPrice = meta.regularMarketPrice;
-  const prevClose = chartData.length >= 2 ? chartData[chartData.length - 2].close : meta.chartPreviousClose;
+  let prevClose;
+  if (interval === '1d' && chartData.length >= 2) {
+    prevClose = chartData[chartData.length - 2].close;
+  } else {
+    // 분봉/시간봉일 때는 meta.chartPreviousClose 대신 일봉 별도 조회
+    prevClose = meta.previousClose || meta.chartPreviousClose;
+  }
   const change = prevClose ? currentPrice - prevClose : 0;
   const changePercent = prevClose ? (change / prevClose) * 100 : 0;
 
@@ -50,12 +56,14 @@ async function fetchYahooData(symbol, range = '6mo') {
     quote: {
       name: meta.shortName || meta.longName || symbol,
       price: currentPrice,
-      change: change,
-      changePercent: changePercent,
+      change,
+      changePercent,
       volume: meta.regularMarketVolume,
       marketCap: meta.marketCap || null,
       fiftyTwoWeekHigh: meta.fiftyTwoWeekHigh,
       fiftyTwoWeekLow: meta.fiftyTwoWeekLow,
+      fiftyDayAverage: meta.fiftyDayAverage,
+      twoHundredDayAverage: meta.twoHundredDayAverage,
       previousClose: prevClose,
       currency: meta.currency,
       exchange: meta.fullExchangeName || meta.exchangeName
@@ -70,7 +78,6 @@ app.get('/api/stock/:symbol', async (req, res) => {
     let symbol = req.params.symbol.toUpperCase();
     const period = req.query.period || '6mo';
 
-    // 한국 종목 번호면 .KS 붙이기
     if (/^\d{6}$/.test(symbol)) {
       symbol = symbol + '.KS';
     }
@@ -79,7 +86,6 @@ app.get('/api/stock/:symbol', async (req, res) => {
     try {
       result = await fetchYahooData(symbol, period);
     } catch (e) {
-      // .KS 실패시 .KQ 시도 (코스닥)
       if (symbol.endsWith('.KS')) {
         symbol = symbol.replace('.KS', '.KQ');
         result = await fetchYahooData(symbol, period);
@@ -132,25 +138,39 @@ app.post('/api/analyze', async (req, res) => {
     }));
 
     const closes = chartData.map(d => d.close);
+    const volumes = chartData.map(d => d.volume);
     const ma5 = calcMA(closes, 5);
     const ma20 = calcMA(closes, 20);
     const ma60 = calcMA(closes, 60);
+    const ma120 = calcMA(closes, 120);
     const rsi = calcRSI(closes, 14);
     const macd = calcMACD(closes);
     const bb = calcBollingerBands(closes, 20);
+    const stoch = calcStochastic(chartData, 14);
+
+    // 거래량 분석
+    const avgVol20 = calcMA(volumes, 20);
+    const currentVol = volumes[volumes.length - 1];
+    const volRatio = avgVol20 > 0 ? currentVol / avgVol20 : 1;
 
     const latestClose = closes[closes.length - 1];
     const indicators = {
-      MA5: Math.round(ma5 * 100) / 100,
-      MA20: Math.round(ma20 * 100) / 100,
-      MA60: Math.round(ma60 * 100) / 100,
-      RSI: Math.round(rsi * 100) / 100,
-      MACD: Math.round(macd.macd * 100) / 100,
-      MACD_Signal: Math.round(macd.signal * 100) / 100,
-      BB_Upper: Math.round(bb.upper * 100) / 100,
-      BB_Middle: Math.round(bb.middle * 100) / 100,
-      BB_Lower: Math.round(bb.lower * 100) / 100,
-      현재가: Math.round(latestClose * 100) / 100
+      MA5: round2(ma5),
+      MA20: round2(ma20),
+      MA60: round2(ma60),
+      MA120: round2(ma120),
+      RSI: round2(rsi),
+      MACD: round2(macd.macd),
+      MACD_Signal: round2(macd.signal),
+      MACD_Histogram: round2(macd.macd - macd.signal),
+      BB_Upper: round2(bb.upper),
+      BB_Middle: round2(bb.middle),
+      BB_Lower: round2(bb.lower),
+      BB_Width: round2(((bb.upper - bb.lower) / bb.middle) * 100),
+      Stochastic_K: round2(stoch.k),
+      Stochastic_D: round2(stoch.d),
+      현재가: round2(latestClose),
+      거래량비율: round2(volRatio)
     };
 
     const prompt = `당신은 20년 경력의 주식 애널리스트입니다. 아래 종목 데이터를 분석해주세요.
@@ -158,7 +178,7 @@ app.post('/api/analyze', async (req, res) => {
 ## 종목 정보
 - 종목: ${quote.name} (${symbol})
 - 현재가: ${quote.price} ${quote.currency || ''}
-- 전일대비: ${quote.change > 0 ? '+' : ''}${Math.round(quote.change * 100) / 100} (${quote.changePercent > 0 ? '+' : ''}${Math.round(quote.changePercent * 100) / 100}%)
+- 전일대비: ${quote.change > 0 ? '+' : ''}${round2(quote.change)} (${quote.changePercent > 0 ? '+' : ''}${round2(quote.changePercent)}%)
 - 52주 최고/최저: ${quote.fiftyTwoWeekHigh} / ${quote.fiftyTwoWeekLow}
 - 거래소: ${quote.exchange}
 
@@ -180,7 +200,7 @@ ${JSON.stringify(priceList.slice(-30), null, 2)}
 
 # 2. 차트/기술적 분석
 
-현재 추세(상승/하락/횡보), 지지선과 저항선, 이동평균선 배열(정배열/역배열), RSI/MACD/볼린저밴드 해석, 거래량 분석을 포함해주세요.
+현재 추세(상승/하락/횡보), 지지선과 저항선, 이동평균선 배열(정배열/역배열), RSI/MACD/볼린저밴드/스토캐스틱 해석, 거래량 분석을 포함해주세요.
 
 구체적인 가격대를 언급하면서 매수/매도 관점의 시나리오를 제시해주세요.
 
@@ -204,40 +224,16 @@ ${JSON.stringify(priceList.slice(-30), null, 2)}
   }
 });
 
-// 기술적 지표 계산 함수들
+// --- 기술적 지표 계산 함수들 ---
+
+function round2(n) {
+  return Math.round(n * 100) / 100;
+}
+
 function calcMA(data, period) {
-  if (data.length < period) return data[data.length - 1];
+  if (data.length < period) return data[data.length - 1] || 0;
   const slice = data.slice(-period);
   return slice.reduce((a, b) => a + b, 0) / period;
-}
-
-function calcRSI(data, period = 14) {
-  if (data.length < period + 1) return 50;
-  const changes = [];
-  for (let i = data.length - period; i < data.length; i++) {
-    changes.push(data[i] - data[i - 1]);
-  }
-  const gains = changes.filter(c => c > 0);
-  const losses = changes.filter(c => c < 0).map(c => Math.abs(c));
-  const avgGain = gains.length ? gains.reduce((a, b) => a + b, 0) / period : 0;
-  const avgLoss = losses.length ? losses.reduce((a, b) => a + b, 0) / period : 0;
-  if (avgLoss === 0) return 100;
-  return 100 - (100 / (1 + avgGain / avgLoss));
-}
-
-function calcMACD(data) {
-  const ema12 = calcEMA(data, 12);
-  const ema26 = calcEMA(data, 26);
-  const macdLine = ema12 - ema26;
-  // MACD 히스토리 기반 시그널 근사
-  const macdHistory = [];
-  for (let i = 26; i < data.length; i++) {
-    const e12 = calcEMA(data.slice(0, i + 1), 12);
-    const e26 = calcEMA(data.slice(0, i + 1), 26);
-    macdHistory.push(e12 - e26);
-  }
-  const signal = macdHistory.length >= 9 ? calcEMA(macdHistory, 9) : macdLine;
-  return { macd: macdLine, signal };
 }
 
 function calcEMA(data, period) {
@@ -250,6 +246,57 @@ function calcEMA(data, period) {
   return ema;
 }
 
+function calcRSI(data, period = 14) {
+  if (data.length < period + 1) return 50;
+  let avgGain = 0, avgLoss = 0;
+  // 초기 평균
+  for (let i = 1; i <= period; i++) {
+    const change = data[i] - data[i - 1];
+    if (change > 0) avgGain += change;
+    else avgLoss += Math.abs(change);
+  }
+  avgGain /= period;
+  avgLoss /= period;
+  // Wilder's smoothing
+  for (let i = period + 1; i < data.length; i++) {
+    const change = data[i] - data[i - 1];
+    avgGain = (avgGain * (period - 1) + (change > 0 ? change : 0)) / period;
+    avgLoss = (avgLoss * (period - 1) + (change < 0 ? Math.abs(change) : 0)) / period;
+  }
+  if (avgLoss === 0) return 100;
+  return 100 - (100 / (1 + avgGain / avgLoss));
+}
+
+function calcMACD(data) {
+  if (data.length < 26) return { macd: 0, signal: 0 };
+  // EMA 12, 26을 점진적으로 계산 (O(n))
+  const k12 = 2 / 13, k26 = 2 / 27, k9 = 2 / 10;
+  let ema12 = data.slice(0, 12).reduce((a, b) => a + b, 0) / 12;
+  let ema26 = data.slice(0, 26).reduce((a, b) => a + b, 0) / 26;
+  // 12~25 구간: ema12만 갱신
+  for (let i = 12; i < 26; i++) {
+    ema12 = data[i] * k12 + ema12 * (1 - k12);
+  }
+  let macdLine = ema12 - ema26;
+  let signal = macdLine;
+  // 26 이후: 양쪽 갱신 + signal EMA 9
+  let signalInitCount = 0;
+  let signalSum = 0;
+  for (let i = 26; i < data.length; i++) {
+    ema12 = data[i] * k12 + ema12 * (1 - k12);
+    ema26 = data[i] * k26 + ema26 * (1 - k26);
+    macdLine = ema12 - ema26;
+    if (signalInitCount < 9) {
+      signalSum += macdLine;
+      signalInitCount++;
+      if (signalInitCount === 9) signal = signalSum / 9;
+    } else {
+      signal = macdLine * k9 + signal * (1 - k9);
+    }
+  }
+  return { macd: macdLine, signal };
+}
+
 function calcBollingerBands(data, period = 20) {
   if (data.length < period) return { upper: 0, middle: 0, lower: 0 };
   const slice = data.slice(-period);
@@ -257,6 +304,28 @@ function calcBollingerBands(data, period = 20) {
   const variance = slice.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / period;
   const std = Math.sqrt(variance);
   return { upper: mean + 2 * std, middle: mean, lower: mean - 2 * std };
+}
+
+function calcStochastic(chartData, period = 14) {
+  if (chartData.length < period) return { k: 50, d: 50 };
+  const recent = chartData.slice(-period);
+  const highs = recent.map(d => d.high);
+  const lows = recent.map(d => d.low);
+  const highestHigh = Math.max(...highs);
+  const lowestLow = Math.min(...lows);
+  const currentClose = recent[recent.length - 1].close;
+  const k = highestHigh === lowestLow ? 50 : ((currentClose - lowestLow) / (highestHigh - lowestLow)) * 100;
+  // %D = 3일 SMA of %K (간소화: 최근 3개 계산)
+  const kValues = [];
+  for (let i = Math.max(0, chartData.length - 3); i < chartData.length; i++) {
+    const slice = chartData.slice(Math.max(0, i - period + 1), i + 1);
+    const h = Math.max(...slice.map(d => d.high));
+    const l = Math.min(...slice.map(d => d.low));
+    const c = slice[slice.length - 1].close;
+    kValues.push(h === l ? 50 : ((c - l) / (h - l)) * 100);
+  }
+  const d = kValues.reduce((a, b) => a + b, 0) / kValues.length;
+  return { k, d };
 }
 
 app.listen(PORT, () => {

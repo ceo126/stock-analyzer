@@ -46,14 +46,17 @@
       <!-- 종목 요약 -->
       <div class="stock-summary" id="stockSummary"></div>
 
-      <!-- 기간 선택 -->
-      <div class="period-selector">
-        <button class="period-btn" data-period="5d">5일</button>
-        <button class="period-btn" data-period="1mo">1개월</button>
-        <button class="period-btn" data-period="3mo">3개월</button>
-        <button class="period-btn active" data-period="6mo">6개월</button>
-        <button class="period-btn" data-period="1y">1년</button>
-        <button class="period-btn" data-period="2y">2년</button>
+      <!-- 기간 선택 + 재분석 -->
+      <div class="controls-row">
+        <div class="period-selector">
+          <button class="period-btn" data-period="5d">5일</button>
+          <button class="period-btn" data-period="1mo">1개월</button>
+          <button class="period-btn" data-period="3mo">3개월</button>
+          <button class="period-btn active" data-period="6mo">6개월</button>
+          <button class="period-btn" data-period="1y">1년</button>
+          <button class="period-btn" data-period="2y">2년</button>
+        </div>
+        <button id="reAnalyzeBtn" class="re-analyze-btn" onclick="reAnalyze()">재분석</button>
       </div>
 
       <!-- 차트 -->

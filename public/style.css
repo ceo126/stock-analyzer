@@ -45,6 +45,7 @@ body {
 
 .search-box {
   display: flex;
+  position: relative;
   max-width: 500px;
   margin: 0 auto;
   gap: 8px;
@@ -87,10 +88,7 @@ body {
   cursor: not-allowed;
 }
 
-.search-box {
-  position: relative;
-}
-
+/* 자동완성 드롭다운 */
 .search-dropdown {
   display: none;
   position: absolute;
@@ -148,6 +146,7 @@ body {
   font-size: 0.8rem;
 }
 
+/* 퀵 태그 */
 .quick-tags {
   margin-top: 12px;
   display: flex;
@@ -269,12 +268,18 @@ body {
   flex-wrap: wrap;
   padding-top: 16px;
   border-top: 1px solid #2a3045;
+  align-items: center;
 }
 
 .meta-item {
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+
+.meta-item-wide {
+  flex: 1;
+  min-width: 250px;
 }
 
 .meta-label {
@@ -290,11 +295,56 @@ body {
   color: #d1d5db;
 }
 
-/* 기간 선택 */
+/* 52주 범위 바 */
+.range-52w {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.range-low, .range-high {
+  font-size: 0.8rem;
+  color: #6b7280;
+  white-space: nowrap;
+}
+
+.range-bar {
+  flex: 1;
+  height: 6px;
+  background: #2a3045;
+  border-radius: 3px;
+  position: relative;
+}
+
+.range-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #ef4444, #eab308, #22c55e);
+  border-radius: 3px;
+}
+
+.range-marker {
+  position: absolute;
+  top: -4px;
+  width: 3px;
+  height: 14px;
+  background: #fff;
+  border-radius: 2px;
+  transform: translateX(-50%);
+}
+
+/* 컨트롤 행 */
+.controls-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+  gap: 12px;
+}
+
 .period-selector {
   display: flex;
   gap: 6px;
-  margin-bottom: 16px;
 }
 
 .period-btn {
@@ -319,6 +369,28 @@ body {
   color: #fff;
 }
 
+.re-analyze-btn {
+  padding: 8px 20px;
+  background: #1a2035;
+  border: 1px solid #2a3045;
+  border-radius: 8px;
+  color: #00d2ff;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 600;
+  transition: all 0.2s;
+}
+
+.re-analyze-btn:hover {
+  border-color: #00d2ff;
+  background: #1e2545;
+}
+
+.re-analyze-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* 차트 */
 .chart-container {
   background: #141929;
@@ -326,6 +398,13 @@ body {
   border-radius: 16px;
   padding: 20px;
   margin-bottom: 16px;
+  position: relative;
+  transition: opacity 0.2s;
+}
+
+.chart-container.chart-loading {
+  opacity: 0.4;
+  pointer-events: none;
 }
 
 .chart {
@@ -414,6 +493,9 @@ body {
   font-size: 1.1rem;
   color: #e5e7eb;
   margin: 20px 0 10px;
+  background: none;
+  -webkit-background-clip: unset;
+  -webkit-text-fill-color: unset;
 }
 
 .analysis-content h3 {
@@ -481,4 +563,7 @@ body {
   .stock-meta { justify-content: center; }
   .chart { height: 300px; }
   .indicators-grid { grid-template-columns: repeat(2, 1fr); }
+  .controls-row { flex-direction: column; align-items: stretch; }
+  .period-selector { flex-wrap: wrap; justify-content: center; }
+  .re-analyze-btn { text-align: center; }
 }
