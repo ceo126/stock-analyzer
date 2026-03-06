@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI 주식 분석기</title>
+  <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app">
+    <!-- 헤더 -->
+    <header class="header">
+      <h1>AI 주식 분석기</h1>
+      <p class="subtitle">거시경제 + 기술적 분석</p>
+    </header>
+
+    <!-- 검색 -->
+    <div class="search-section">
+      <div class="search-box">
+        <input type="text" id="symbolInput" placeholder="종목코드 입력 (예: AAPL, 005930, TSLA)" autocomplete="off">
+        <button id="searchBtn" onclick="analyzeStock()">분석</button>
+      </div>
+      <div class="quick-tags">
+        <span onclick="setSymbol('005930')">삼성전자</span>
+        <span onclick="setSymbol('000660')">SK하이닉스</span>
+        <span onclick="setSymbol('AAPL')">Apple</span>
+        <span onclick="setSymbol('TSLA')">Tesla</span>
+        <span onclick="setSymbol('NVDA')">NVIDIA</span>
+        <span onclick="setSymbol('MSFT')">Microsoft</span>
+      </div>
+    </div>
+
+    <!-- 로딩 -->
+    <div id="loading" class="loading hidden">
+      <div class="spinner"></div>
+      <p id="loadingText">데이터를 불러오는 중...</p>
+    </div>
+
+    <!-- 에러 -->
+    <div id="error" class="error hidden"></div>
+
+    <!-- 결과 영역 -->
+    <div id="result" class="result hidden">
+      <!-- 종목 요약 -->
+      <div class="stock-summary" id="stockSummary"></div>
+
+      <!-- 기간 선택 -->
+      <div class="period-selector">
+        <button class="period-btn" data-period="5d">5일</button>
+        <button class="period-btn" data-period="1mo">1개월</button>
+        <button class="period-btn" data-period="3mo">3개월</button>
+        <button class="period-btn active" data-period="6mo">6개월</button>
+        <button class="period-btn" data-period="1y">1년</button>
+        <button class="period-btn" data-period="2y">2년</button>
+      </div>
+
+      <!-- 차트 -->
+      <div class="chart-container">
+        <div id="priceChart" class="chart"></div>
+        <div id="volumeChart" class="volume-chart"></div>
+      </div>
+
+      <!-- 기술적 지표 카드 -->
+      <div class="indicators-grid" id="indicatorsGrid"></div>
+
+      <!-- AI 분석 -->
+      <div class="analysis-section" id="analysisSection">
+        <h2>AI 분석 리포트</h2>
+        <div id="analysisContent" class="analysis-content"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

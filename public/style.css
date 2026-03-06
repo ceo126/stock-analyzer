@@ -1,0 +1,484 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+  background: #0a0e17;
+  color: #e1e5ee;
+  min-height: 100vh;
+}
+
+.app {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+/* 헤더 */
+.header {
+  text-align: center;
+  padding: 30px 0 20px;
+}
+
+.header h1 {
+  font-size: 2rem;
+  background: linear-gradient(135deg, #00d2ff, #7b61ff);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  font-weight: 800;
+}
+
+.subtitle {
+  color: #6b7280;
+  margin-top: 6px;
+  font-size: 0.95rem;
+}
+
+/* 검색 */
+.search-section {
+  margin: 20px 0 30px;
+  text-align: center;
+}
+
+.search-box {
+  display: flex;
+  max-width: 500px;
+  margin: 0 auto;
+  gap: 8px;
+}
+
+.search-box input {
+  flex: 1;
+  padding: 14px 20px;
+  background: #141929;
+  border: 1px solid #2a3045;
+  border-radius: 12px;
+  color: #fff;
+  font-size: 1rem;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.search-box input:focus {
+  border-color: #7b61ff;
+}
+
+.search-box button {
+  padding: 14px 28px;
+  background: linear-gradient(135deg, #7b61ff, #00d2ff);
+  border: none;
+  border-radius: 12px;
+  color: #fff;
+  font-size: 1rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+
+.search-box button:hover {
+  opacity: 0.85;
+}
+
+.search-box button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.search-box {
+  position: relative;
+}
+
+.search-dropdown {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 80px;
+  background: #1a2035;
+  border: 1px solid #2a3045;
+  border-radius: 12px;
+  margin-top: 4px;
+  max-height: 300px;
+  overflow-y: auto;
+  z-index: 100;
+}
+
+.search-dropdown.show {
+  display: block;
+}
+
+.dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.dropdown-item:hover {
+  background: #1e2545;
+}
+
+.dropdown-item:first-child {
+  border-radius: 12px 12px 0 0;
+}
+
+.dropdown-item:last-child {
+  border-radius: 0 0 12px 12px;
+}
+
+.dropdown-symbol {
+  font-weight: 700;
+  color: #7b61ff;
+  min-width: 80px;
+}
+
+.dropdown-name {
+  flex: 1;
+  color: #d1d5db;
+  font-size: 0.9rem;
+}
+
+.dropdown-exchange {
+  color: #6b7280;
+  font-size: 0.8rem;
+}
+
+.quick-tags {
+  margin-top: 12px;
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.quick-tags span {
+  padding: 6px 14px;
+  background: #1a2035;
+  border: 1px solid #2a3045;
+  border-radius: 20px;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all 0.2s;
+  color: #9ca3af;
+}
+
+.quick-tags span:hover {
+  border-color: #7b61ff;
+  color: #fff;
+  background: #1e2545;
+}
+
+/* 로딩 */
+.loading {
+  text-align: center;
+  padding: 60px 0;
+}
+
+.spinner {
+  width: 48px;
+  height: 48px;
+  border: 4px solid #1a2035;
+  border-top-color: #7b61ff;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin: 0 auto 16px;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.loading p {
+  color: #6b7280;
+}
+
+/* 에러 */
+.error {
+  background: #1c1018;
+  border: 1px solid #5c2030;
+  border-radius: 12px;
+  padding: 16px 20px;
+  color: #f87171;
+  text-align: center;
+  margin: 20px 0;
+}
+
+.hidden {
+  display: none !important;
+}
+
+/* 종목 요약 */
+.stock-summary {
+  background: #141929;
+  border: 1px solid #2a3045;
+  border-radius: 16px;
+  padding: 24px;
+  margin-bottom: 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.stock-name-block {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.stock-name {
+  font-size: 1.5rem;
+  font-weight: 800;
+  color: #fff;
+}
+
+.stock-symbol {
+  font-size: 0.9rem;
+  color: #6b7280;
+}
+
+.stock-price-block {
+  text-align: right;
+}
+
+.stock-price {
+  font-size: 2rem;
+  font-weight: 800;
+  color: #fff;
+}
+
+.stock-change {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin-top: 2px;
+}
+
+.stock-change.up { color: #22c55e; }
+.stock-change.down { color: #ef4444; }
+
+.stock-meta {
+  display: flex;
+  gap: 24px;
+  width: 100%;
+  flex-wrap: wrap;
+  padding-top: 16px;
+  border-top: 1px solid #2a3045;
+}
+
+.meta-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.meta-label {
+  font-size: 0.75rem;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.meta-value {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #d1d5db;
+}
+
+/* 기간 선택 */
+.period-selector {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+
+.period-btn {
+  padding: 8px 16px;
+  background: #141929;
+  border: 1px solid #2a3045;
+  border-radius: 8px;
+  color: #9ca3af;
+  cursor: pointer;
+  font-size: 0.85rem;
+  transition: all 0.2s;
+}
+
+.period-btn:hover {
+  border-color: #7b61ff;
+  color: #fff;
+}
+
+.period-btn.active {
+  background: #7b61ff;
+  border-color: #7b61ff;
+  color: #fff;
+}
+
+/* 차트 */
+.chart-container {
+  background: #141929;
+  border: 1px solid #2a3045;
+  border-radius: 16px;
+  padding: 20px;
+  margin-bottom: 16px;
+}
+
+.chart {
+  width: 100%;
+  height: 400px;
+}
+
+.volume-chart {
+  width: 100%;
+  height: 100px;
+  margin-top: 8px;
+}
+
+/* 기술적 지표 */
+.indicators-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.indicator-card {
+  background: #141929;
+  border: 1px solid #2a3045;
+  border-radius: 12px;
+  padding: 16px;
+}
+
+.indicator-label {
+  font-size: 0.75rem;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+}
+
+.indicator-value {
+  font-size: 1.3rem;
+  font-weight: 700;
+}
+
+.indicator-value.bullish { color: #22c55e; }
+.indicator-value.bearish { color: #ef4444; }
+.indicator-value.neutral { color: #eab308; }
+
+.indicator-desc {
+  font-size: 0.8rem;
+  color: #6b7280;
+  margin-top: 4px;
+}
+
+/* AI 분석 */
+.analysis-section {
+  background: #141929;
+  border: 1px solid #2a3045;
+  border-radius: 16px;
+  padding: 28px;
+}
+
+.analysis-section h2 {
+  font-size: 1.3rem;
+  margin-bottom: 20px;
+  background: linear-gradient(135deg, #00d2ff, #7b61ff);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.analysis-content {
+  line-height: 1.8;
+  color: #d1d5db;
+}
+
+.analysis-content h1 {
+  font-size: 1.25rem;
+  color: #fff;
+  margin: 28px 0 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #2a3045;
+}
+
+.analysis-content h1:first-child {
+  margin-top: 0;
+}
+
+.analysis-content h2 {
+  font-size: 1.1rem;
+  color: #e5e7eb;
+  margin: 20px 0 10px;
+}
+
+.analysis-content h3 {
+  font-size: 1rem;
+  color: #d1d5db;
+  margin: 16px 0 8px;
+}
+
+.analysis-content ul, .analysis-content ol {
+  padding-left: 24px;
+  margin: 8px 0;
+}
+
+.analysis-content li {
+  margin: 6px 0;
+}
+
+.analysis-content strong {
+  color: #fff;
+}
+
+.analysis-content hr {
+  border: none;
+  border-top: 1px solid #2a3045;
+  margin: 24px 0;
+}
+
+.analysis-content blockquote {
+  border-left: 3px solid #7b61ff;
+  padding-left: 16px;
+  margin: 12px 0;
+  color: #9ca3af;
+}
+
+.analysis-content code {
+  background: #1e2545;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.9em;
+}
+
+.analysis-content table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 12px 0;
+}
+
+.analysis-content th, .analysis-content td {
+  padding: 8px 12px;
+  border: 1px solid #2a3045;
+  text-align: left;
+}
+
+.analysis-content th {
+  background: #1a2035;
+  color: #fff;
+}
+
+/* 반응형 */
+@media (max-width: 768px) {
+  .app { padding: 12px; }
+  .header h1 { font-size: 1.5rem; }
+  .stock-summary { flex-direction: column; text-align: center; }
+  .stock-price-block { text-align: center; }
+  .stock-meta { justify-content: center; }
+  .chart { height: 300px; }
+  .indicators-grid { grid-template-columns: repeat(2, 1fr); }
+}
