@@ -356,16 +356,16 @@ function renderChart(chartData) {
     height: 400,
     layout: {
       background: { color: 'transparent' },
-      textColor: '#6b7280',
+      textColor: '#8b95a5',
     },
     grid: {
-      vertLines: { color: '#1e2545' },
-      horzLines: { color: '#1e2545' },
+      vertLines: { color: '#f0f2f5' },
+      horzLines: { color: '#f0f2f5' },
     },
     crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
-    rightPriceScale: { borderColor: '#2a3045' },
+    rightPriceScale: { borderColor: '#e4e8ee' },
     timeScale: {
-      borderColor: '#2a3045',
+      borderColor: '#e4e8ee',
       timeVisible: true,
     },
   });
@@ -374,14 +374,14 @@ function renderChart(chartData) {
   const bbData = calcBBArray(chartData, 20);
   if (bbData.length > 0) {
     const bbUpperSeries = priceChart.addLineSeries({
-      color: 'rgba(123,97,255,0.3)',
+      color: 'rgba(79,110,247,0.25)',
       lineWidth: 1,
       lineStyle: 2,
       title: 'BB Upper',
       crosshairMarkerVisible: false,
     });
     const bbLowerSeries = priceChart.addLineSeries({
-      color: 'rgba(123,97,255,0.3)',
+      color: 'rgba(79,110,247,0.25)',
       lineWidth: 1,
       lineStyle: 2,
       title: 'BB Lower',
@@ -393,12 +393,12 @@ function renderChart(chartData) {
 
   // 캔들스틱
   const candleSeries = priceChart.addCandlestickSeries({
-    upColor: '#22c55e',
-    downColor: '#ef4444',
-    borderDownColor: '#ef4444',
-    borderUpColor: '#22c55e',
-    wickDownColor: '#ef4444',
-    wickUpColor: '#22c55e',
+    upColor: '#16a34a',
+    downColor: '#e53e3e',
+    borderDownColor: '#e53e3e',
+    borderUpColor: '#16a34a',
+    wickDownColor: '#e53e3e',
+    wickUpColor: '#16a34a',
   });
 
   candleSeries.setData(chartData.map(d => ({
@@ -412,9 +412,9 @@ function renderChart(chartData) {
   // 이동평균선
   const maConfigs = [
     { period: 5, color: '#eab308', title: 'MA5' },
-    { period: 20, color: '#3b82f6', title: 'MA20' },
+    { period: 20, color: '#4f6ef7', title: 'MA20' },
     { period: 60, color: '#a855f7', title: 'MA60' },
-    { period: 120, color: '#ef4444', title: 'MA120' },
+    { period: 120, color: '#e53e3e', title: 'MA120' },
   ];
 
   maConfigs.forEach(({ period, color, title }) => {
@@ -432,13 +432,13 @@ function renderChart(chartData) {
     height: 100,
     layout: {
       background: { color: 'transparent' },
-      textColor: '#6b7280',
+      textColor: '#8b95a5',
     },
     grid: {
       vertLines: { visible: false },
-      horzLines: { color: '#1e2545' },
+      horzLines: { color: '#f0f2f5' },
     },
-    rightPriceScale: { borderColor: '#2a3045' },
+    rightPriceScale: { borderColor: '#e4e8ee' },
     timeScale: { visible: false },
   });
 
@@ -449,7 +449,7 @@ function renderChart(chartData) {
   volumeSeries.setData(chartData.map(d => ({
     time: toChartTime(d.date),
     value: d.volume,
-    color: d.close >= d.open ? 'rgba(34,197,94,0.4)' : 'rgba(239,68,68,0.4)',
+    color: d.close >= d.open ? 'rgba(22,163,74,0.35)' : 'rgba(229,62,62,0.35)',
   })));
 
   volumeChart.timeScale().fitContent();
