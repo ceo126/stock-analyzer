@@ -603,16 +603,11 @@ function getMAAlignmentDesc(ind) {
 
 function renderAnalysis(markdown) {
   const parsed = marked.parse(markdown, { breaks: true });
-  const sanitized = parsed
-    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
-    .replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, '')
-    .replace(/<object\b[^<]*(?:(?!<\/object>)<[^<]*)*<\/object>/gi, '')
-    .replace(/<embed[^>]*>/gi, '')
-    .replace(/on\w+\s*=\s*"[^"]*"/gi, '')
-    .replace(/on\w+\s*=\s*'[^']*'/gi, '')
-    .replace(/on\w+\s*=[^\s>]*/gi, '')
-    .replace(/href\s*=\s*["']?\s*javascript:/gi, 'href="')
-    .replace(/src\s*=\s*["']?\s*javascript:/gi, 'src="');
+  const sanitized = DOMPurify.sanitize(parsed, {
+    ALLOWED_TAGS: ['h1','h2','h3','h4','h5','h6','p','br','hr','ul','ol','li','strong','em','a','code','pre','blockquote','table','thead','tbody','tr','th','td','div','span'],
+    ALLOWED_ATTR: ['href','class'],
+    FORBID_ATTR: ['style','onerror','onload'],
+  });
 
   const now = new Date();
   const timeStr = `${now.getFullYear()}.${String(now.getMonth()+1).padStart(2,'0')}.${String(now.getDate()).padStart(2,'0')} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;

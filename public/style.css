@@ -117,7 +117,8 @@ body {
   transition: background 0.15s;
 }
 
-.dropdown-item:hover {
+.dropdown-item:hover,
+.dropdown-item.highlight {
   background: #1e2545;
 }
 

@@ -8,8 +8,19 @@ const app = express();
 const PORT = process.env.PORT || 8120;
 
 app.use(cors());
-app.use(express.json({ limit: '5mb' }));
+app.use(express.json({ limit: '1mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
+
+// 간이 Rate Limiting (IP당 분당 30회)
+const rateMap = new Map();
+setInterval(() => rateMap.clear(), 60000);
+app.use('/api', (req, res, next) => {
+  const ip = req.ip;
+  const count = (rateMap.get(ip) || 0) + 1;
+  rateMap.set(ip, count);
+  if (count > 30) return res.status(429).json({ success: false, error: '요청이 너무 많습니다. 잠시 후 다시 시도해주세요.' });
+  next();
+});
 
 if (!process.env.GEMINI_API_KEY) {
   console.error('GEMINI_API_KEY가 .env에 설정되어 있지 않습니다.');
@@ -137,6 +148,11 @@ function getKrStockName(symbol) {
   return KR_STOCK_NAMES[code] || null;
 }
 
+// 심볼 형식 검증 (SSRF 방지)
+function isValidSymbol(symbol) {
+  return /^[A-Z0-9]{1,10}(\.(KS|KQ|T|L|HK|SS|SZ))?$/.test(symbol);
+}
+
 // 주식 데이터 조회 API
 app.get('/api/stock/:symbol', async (req, res) => {
   try {
@@ -145,6 +161,10 @@ app.get('/api/stock/:symbol', async (req, res) => {
     const period = validPeriods.includes(req.query.period) ? req.query.period : '6mo';
 
     if (/^\d{6}$/.test(symbol)) symbol += '.KS';
+
+    if (!isValidSymbol(symbol)) {
+      return res.status(400).json({ success: false, error: '유효하지 않은 종목코드 형식입니다.' });
+    }
 
     let result;
     try {
@@ -180,7 +200,7 @@ app.get('/api/stock/:symbol', async (req, res) => {
 // 종목 검색 API
 app.get('/api/search', async (req, res) => {
   try {
-    const query = req.query.q;
+    const query = (req.query.q || '').trim().slice(0, 50);
     if (!query) return res.json({ results: [] });
 
     const url = `https://query2.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(query)}&quotesCount=8&newsCount=0&listsCount=0`;
@@ -201,7 +221,7 @@ app.get('/api/search', async (req, res) => {
 app.post('/api/analyze', async (req, res) => {
   try {
     const { symbol, quote, chartData } = req.body;
-    if (!symbol || !quote || !Array.isArray(chartData) || chartData.length === 0) {
+    if (!symbol || !quote || !Array.isArray(chartData) || chartData.length === 0 || chartData.length > 1000) {
       return res.status(400).json({ success: false, error: '유효하지 않은 요청 데이터입니다.' });
     }
 
