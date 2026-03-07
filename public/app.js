@@ -93,59 +93,9 @@ function addSearchHistory(symbol, name, exchange) {
   localStorage.setItem('stockSearchHistory', JSON.stringify(history.slice(0, 8)));
 }
 
-// 한국 주요 종목 로컬 데이터
-const KR_STOCKS = [
-  { symbol: '005930.KS', name: '삼성전자', exchange: 'KOSPI' },
-  { symbol: '005935.KS', name: '삼성전자우', exchange: 'KOSPI' },
-  { symbol: '000660.KS', name: 'SK하이닉스', exchange: 'KOSPI' },
-  { symbol: '005380.KS', name: '현대차', exchange: 'KOSPI' },
-  { symbol: '005490.KS', name: 'POSCO홀딩스', exchange: 'KOSPI' },
-  { symbol: '035420.KS', name: 'NAVER', exchange: 'KOSPI' },
-  { symbol: '035720.KS', name: '카카오', exchange: 'KOSPI' },
-  { symbol: '051910.KS', name: 'LG화학', exchange: 'KOSPI' },
-  { symbol: '006400.KS', name: '삼성SDI', exchange: 'KOSPI' },
-  { symbol: '003670.KS', name: '포스코퓨처엠', exchange: 'KOSPI' },
-  { symbol: '105560.KS', name: 'KB금융', exchange: 'KOSPI' },
-  { symbol: '055550.KS', name: '신한지주', exchange: 'KOSPI' },
-  { symbol: '086790.KS', name: '하나금융지주', exchange: 'KOSPI' },
-  { symbol: '066570.KS', name: 'LG전자', exchange: 'KOSPI' },
-  { symbol: '003550.KS', name: 'LG', exchange: 'KOSPI' },
-  { symbol: '034730.KS', name: 'SK', exchange: 'KOSPI' },
-  { symbol: '000270.KS', name: '기아', exchange: 'KOSPI' },
-  { symbol: '012330.KS', name: '현대모비스', exchange: 'KOSPI' },
-  { symbol: '028260.KS', name: '삼성물산', exchange: 'KOSPI' },
-  { symbol: '207940.KS', name: '삼성바이오로직스', exchange: 'KOSPI' },
-  { symbol: '068270.KS', name: '셀트리온', exchange: 'KOSPI' },
-  { symbol: '009150.KS', name: '삼성전기', exchange: 'KOSPI' },
-  { symbol: '018260.KS', name: '삼성에스디에스', exchange: 'KOSPI' },
-  { symbol: '010130.KS', name: '고려아연', exchange: 'KOSPI' },
-  { symbol: '032830.KS', name: '삼성생명', exchange: 'KOSPI' },
-  { symbol: '096770.KS', name: 'SK이노베이션', exchange: 'KOSPI' },
-  { symbol: '030200.KS', name: 'KT', exchange: 'KOSPI' },
-  { symbol: '017670.KS', name: 'SK텔레콤', exchange: 'KOSPI' },
-  { symbol: '316140.KS', name: '우리금융지주', exchange: 'KOSPI' },
-  { symbol: '323410.KS', name: '카카오뱅크', exchange: 'KOSPI' },
-  { symbol: '259960.KS', name: '크래프톤', exchange: 'KOSPI' },
-  { symbol: '003490.KS', name: '대한항공', exchange: 'KOSPI' },
-  { symbol: '033780.KS', name: 'KT&G', exchange: 'KOSPI' },
-  { symbol: '011200.KS', name: 'HMM', exchange: 'KOSPI' },
-  { symbol: '015760.KS', name: '한국전력', exchange: 'KOSPI' },
-  { symbol: '034020.KS', name: '두산에너빌리티', exchange: 'KOSPI' },
-  { symbol: '010950.KS', name: 'S-Oil', exchange: 'KOSPI' },
-  { symbol: '373220.KS', name: 'LG에너지솔루션', exchange: 'KOSPI' },
-  { symbol: '352820.KS', name: '하이브', exchange: 'KOSPI' },
-  { symbol: '247540.KS', name: '에코프로비엠', exchange: 'KOSPI' },
-  { symbol: '086520.KQ', name: '에코프로', exchange: 'KOSDAQ' },
-  { symbol: '263750.KS', name: '펄어비스', exchange: 'KOSPI' },
-  { symbol: '042700.KQ', name: '한미반도체', exchange: 'KOSDAQ' },
-  { symbol: '196170.KQ', name: '알테오젠', exchange: 'KOSDAQ' },
-  { symbol: '377300.KS', name: '카카오페이', exchange: 'KOSPI' },
-  { symbol: '036570.KS', name: '엔씨소프트', exchange: 'KOSPI' },
-  { symbol: '251270.KS', name: '넷마블', exchange: 'KOSPI' },
-  { symbol: '047050.KS', name: '포스코인터내셔널', exchange: 'KOSPI' },
-  { symbol: '000810.KS', name: '삼성화재', exchange: 'KOSPI' },
-  { symbol: '024110.KS', name: '기업은행', exchange: 'KOSPI' },
-];
+// 한국 주요 종목 (서버에서 로드)
+let KR_STOCKS = [];
+fetch('/api/kr-stocks').then(r => r.json()).then(data => { KR_STOCKS = data.stocks || []; }).catch(() => {});
 
 function searchLocalStocks(query) {
   const q = query.toLowerCase();
@@ -214,6 +164,7 @@ document.querySelectorAll('.period-btn').forEach(btn => {
       document.getElementById('indicatorsGrid').innerHTML = '';
       fetchStockData(currentSymbol, btn.dataset.period)
         .then(() => {
+          showChartLoading(false);
           setText('loadingText', 'AI가 종목을 분석하고 있습니다...');
           show('loading');
           return fetchAnalysis();
@@ -223,9 +174,9 @@ document.querySelectorAll('.period-btn').forEach(btn => {
         })
         .catch(err => {
           hide('loading');
+          showChartLoading(false);
           showError(err.message);
-        })
-        .finally(() => showChartLoading(false));
+        });
     }
   });
 });

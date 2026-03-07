@@ -197,6 +197,15 @@ app.get('/api/stock/:symbol', async (req, res) => {
   }
 });
 
+// 한국 종목 목록 API (클라이언트 중복 제거용)
+app.get('/api/kr-stocks', (req, res) => {
+  const list = Object.entries(KR_STOCK_NAMES).map(([code, name]) => {
+    const suffix = code.match(/^(042700|196170|086520)$/) ? '.KQ' : '.KS';
+    return { symbol: code + suffix, name, exchange: suffix === '.KQ' ? 'KOSDAQ' : 'KOSPI' };
+  });
+  res.json({ stocks: list });
+});
+
 // 종목 검색 API
 app.get('/api/search', async (req, res) => {
   try {
@@ -299,7 +308,10 @@ ${JSON.stringify(priceSummary, null, 2)}
 > 본 분석은 투자 권유가 아닌 참고 자료입니다.`;
 
     const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
-    const result = await model.generateContent(prompt);
+    const result = await Promise.race([
+      model.generateContent(prompt),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('AI 분석 시간이 초과되었습니다. 다시 시도해주세요.')), 60000))
+    ]);
     const text = result.response.text();
 
     res.json({ success: true, analysis: text, indicators });
