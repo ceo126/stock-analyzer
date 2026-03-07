@@ -4,6 +4,7 @@ let currentQuote = null;
 let priceChart = null;
 let volumeChart = null;
 let resizeObserverRef = null;
+let analyzeController = null; // AbortController for canceling requests
 
 // 엔터 키 처리
 const symbolInput = document.getElementById('symbolInput');
@@ -176,6 +177,11 @@ async function analyzeStock() {
   const input = document.getElementById('symbolInput').value.trim();
   if (!input) return;
 
+  // 이전 분석 요청 취소
+  if (analyzeController) analyzeController.abort();
+  analyzeController = new AbortController();
+  const signal = analyzeController.signal;
+
   const btn = document.getElementById('searchBtn');
   btn.disabled = true;
 
@@ -188,11 +194,14 @@ async function analyzeStock() {
     const period = document.querySelector('.period-btn.active')?.dataset.period || '6mo';
     await fetchStockData(input, period);
 
+    if (signal.aborted) return;
+
     setText('loadingText', 'AI가 종목을 분석하고 있습니다...');
-    await fetchAnalysis();
+    await fetchAnalysis(signal);
 
     show('result');
   } catch (err) {
+    if (err.name === 'AbortError') return;
     showError(err.message);
   } finally {
     hide('loading');
@@ -215,8 +224,8 @@ async function fetchStockData(symbol, period = '6mo') {
   show('result');
 }
 
-async function fetchAnalysis() {
-  const res = await fetch('/api/analyze', {
+async function fetchAnalysis(signal) {
+  const fetchOptions = {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -224,7 +233,10 @@ async function fetchAnalysis() {
       quote: currentQuote,
       chartData: currentChartData
     })
-  });
+  };
+  if (signal) fetchOptions.signal = signal;
+
+  const res = await fetch('/api/analyze', fetchOptions);
   const data = await res.json();
 
   if (!data.success) throw new Error(data.error || '분석에 실패했습니다');
@@ -268,9 +280,13 @@ function renderSummary(quote, symbol) {
       </div>
     </div>
     <div class="stock-meta">
-      <div class="meta-item">
+      ${quote.marketCap ? `<div class="meta-item">
         <span class="meta-label">시가총액</span>
         <span class="meta-value">${formatMarketCap(quote.marketCap, quote.currency)}</span>
+      </div>` : ''}
+      <div class="meta-item">
+        <span class="meta-label">전일종가</span>
+        <span class="meta-value">${formatNumber(quote.previousClose)}</span>
       </div>
       <div class="meta-item">
         <span class="meta-label">거래량</span>
@@ -515,17 +531,18 @@ function getMAAlignmentDesc(ind) {
 }
 
 function renderAnalysis(markdown) {
-  const renderer = new marked.Renderer();
-  const parsed = marked.parse(markdown, {
-    renderer,
-    breaks: true,
-  });
+  const parsed = marked.parse(markdown, { breaks: true });
   // 스크립트 태그 제거 (AI 응답 XSS 방지)
   const sanitized = parsed
     .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
     .replace(/on\w+\s*=\s*"[^"]*"/gi, '')
     .replace(/on\w+\s*=\s*'[^']*'/gi, '');
-  document.getElementById('analysisContent').innerHTML = sanitized;
+
+  const now = new Date();
+  const timeStr = `${now.getFullYear()}.${String(now.getMonth()+1).padStart(2,'0')}.${String(now.getDate()).padStart(2,'0')} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+
+  document.getElementById('analysisContent').innerHTML =
+    `<div class="analysis-time">분석 시점: ${timeStr}</div>` + sanitized;
   document.getElementById('analysisSection').classList.remove('hidden');
 }
 

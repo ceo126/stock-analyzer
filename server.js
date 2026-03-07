@@ -78,6 +78,40 @@ async function fetchYahooData(symbol, range = '6mo') {
   };
 }
 
+// 한국 종목 이름 매핑 (Yahoo가 영문 약자로 반환하는 경우 보정)
+const KR_STOCK_NAMES = {
+  '005930': '삼성전자', '005935': '삼성전자우', '000660': 'SK하이닉스',
+  '005380': '현대차', '005490': 'POSCO홀딩스', '035420': 'NAVER',
+  '035720': '카카오', '051910': 'LG화학', '006400': '삼성SDI',
+  '003670': '포스코퓨처엠', '105560': 'KB금융', '055550': '신한지주',
+  '086790': '하나금융지주', '066570': 'LG전자', '003550': 'LG',
+  '034730': 'SK', '000270': '기아', '012330': '현대모비스',
+  '028260': '삼성물산', '207940': '삼성바이오로직스', '068270': '셀트리온',
+  '009150': '삼성전기', '018260': '삼성SDS', '010130': '고려아연',
+  '032830': '삼성생명', '096770': 'SK이노베이션', '030200': 'KT',
+  '017670': 'SK텔레콤', '316140': '우리금융지주', '323410': '카카오뱅크',
+  '259960': '크래프톤', '003490': '대한항공', '033780': 'KT&G',
+  '011200': 'HMM', '015760': '한국전력', '034020': '두산에너빌리티',
+  '010950': 'S-Oil', '373220': 'LG에너지솔루션', '352820': '하이브',
+  '247540': '에코프로비엠', '086520': '에코프로', '263750': '펄어비스',
+  '042700': '한미반도체', '196170': '알테오젠', '377300': '카카오페이',
+  '036570': '엔씨소프트', '251270': '넷마블', '047050': '포스코인터내셔널',
+  '000810': '삼성화재', '024110': '기업은행',
+};
+
+function getKrStockName(symbol, fallback) {
+  const code = symbol.replace(/\.(KS|KQ)$/, '');
+  return KR_STOCK_NAMES[code] || fallback;
+}
+
+// 종목이 유효한 이름을 가지고 있는지 확인
+function isValidName(name, symbol) {
+  if (!name) return false;
+  // Yahoo가 코드+쉼표+이상한 문자열 반환하는 경우
+  if (name.includes(',') && name.includes('0P0000')) return false;
+  return true;
+}
+
 // 주식 데이터 조회 API
 app.get('/api/stock/:symbol', async (req, res) => {
   try {
@@ -85,22 +119,44 @@ app.get('/api/stock/:symbol', async (req, res) => {
     const validPeriods = ['5d', '1mo', '3mo', '6mo', '1y', '2y'];
     const period = validPeriods.includes(req.query.period) ? req.query.period : '6mo';
 
+    // 이미 .KS/.KQ가 붙어있으면 그대로 사용
     if (/^\d{6}$/.test(symbol)) {
       symbol = symbol + '.KS';
     }
 
     let result;
+    let triedKQ = false;
     try {
       result = await fetchYahooData(symbol, period);
+      // .KS로 가져왔지만 이름이 깨졌으면 .KQ 시도
+      if (symbol.endsWith('.KS') && !isValidName(result.quote.name, symbol)) {
+        const kqSymbol = symbol.replace('.KS', '.KQ');
+        try {
+          const kqResult = await fetchYahooData(kqSymbol, period);
+          result = kqResult;
+          symbol = kqSymbol;
+          triedKQ = true;
+        } catch {}
+      }
     } catch (e) {
       if (symbol.endsWith('.KS')) {
         symbol = symbol.replace('.KS', '.KQ');
         result = await fetchYahooData(symbol, period);
+        triedKQ = true;
       } else {
         throw e;
       }
     }
 
+    // 한국 종목명 보정
+    const krName = getKrStockName(symbol, null);
+    if (krName) {
+      result.quote.name = krName;
+    } else if (!isValidName(result.quote.name, symbol)) {
+      result.quote.name = symbol.replace(/\.(KS|KQ)$/, '');
+    }
+
+    result.symbol = symbol;
     res.json({ success: true, ...result });
   } catch (err) {
     console.error('Stock fetch error:', err.message);
