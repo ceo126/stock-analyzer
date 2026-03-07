@@ -17,68 +17,15 @@ if (!process.env.GEMINI_API_KEY) {
 }
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// Yahoo Finance v8 chart API로 quote + 차트 데이터 통합 조회
-async function fetchYahooData(symbol, range = '6mo') {
-  const intervalMap = { '5d': '15m', '1mo': '1h' };
-  const interval = intervalMap[range] || '1d';
+// 서버 안정성 - 예외 처리
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught Exception:', err.message);
+});
+process.on('unhandledRejection', (err) => {
+  console.error('Unhandled Rejection:', err.message);
+});
 
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=${range}&interval=${interval}&includePrePost=false`;
-  const res = await fetch(url, {
-    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
-  });
-  if (!res.ok) {
-    if (res.status === 429) throw new Error('요청이 너무 많습니다. 잠시 후 다시 시도해주세요.');
-    throw new Error(`Yahoo Finance 요청 실패 (${res.status})`);
-  }
-  const data = await res.json();
-  const chart = data?.chart?.result?.[0];
-  if (!chart) throw new Error('종목을 찾을 수 없습니다');
-
-  const meta = chart.meta;
-  const timestamps = chart.timestamp || [];
-  const ohlcv = chart.indicators?.quote?.[0] || {};
-
-  const chartData = timestamps.map((t, i) => ({
-    date: new Date(t * 1000).toISOString(),
-    open: ohlcv.open?.[i],
-    high: ohlcv.high?.[i],
-    low: ohlcv.low?.[i],
-    close: ohlcv.close?.[i],
-    volume: ohlcv.volume?.[i]
-  })).filter(d => d.close != null);
-
-  // 전일 대비 계산 - 일봉 기준으로 정확한 전일 종가 사용
-  const currentPrice = meta.regularMarketPrice;
-  let prevClose;
-  if (interval === '1d' && chartData.length >= 2) {
-    prevClose = chartData[chartData.length - 2].close;
-  } else {
-    // 분봉/시간봉일 때는 meta.chartPreviousClose 대신 일봉 별도 조회
-    prevClose = meta.previousClose || meta.chartPreviousClose;
-  }
-  const change = prevClose ? currentPrice - prevClose : 0;
-  const changePercent = prevClose ? (change / prevClose) * 100 : 0;
-
-  return {
-    symbol,
-    quote: {
-      name: meta.shortName || meta.longName || symbol,
-      price: currentPrice,
-      change,
-      changePercent,
-      volume: meta.regularMarketVolume,
-      marketCap: meta.marketCap || null,
-      fiftyTwoWeekHigh: meta.fiftyTwoWeekHigh,
-      fiftyTwoWeekLow: meta.fiftyTwoWeekLow,
-      previousClose: prevClose,
-      currency: meta.currency,
-      exchange: meta.fullExchangeName || meta.exchangeName
-    },
-    chartData
-  };
-}
-
-// 한국 종목 이름 매핑 (Yahoo가 영문 약자로 반환하는 경우 보정)
+// 한국 종목 이름 매핑
 const KR_STOCK_NAMES = {
   '005930': '삼성전자', '005935': '삼성전자우', '000660': 'SK하이닉스',
   '005380': '현대차', '005490': 'POSCO홀딩스', '035420': 'NAVER',
@@ -99,62 +46,128 @@ const KR_STOCK_NAMES = {
   '000810': '삼성화재', '024110': '기업은행',
 };
 
-function getKrStockName(symbol, fallback) {
-  const code = symbol.replace(/\.(KS|KQ)$/, '');
-  return KR_STOCK_NAMES[code] || fallback;
+// Yahoo Finance API 호출 (재시도 포함)
+async function fetchWithRetry(url, retries = 2) {
+  for (let i = 0; i <= retries; i++) {
+    try {
+      const res = await fetch(url, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+        signal: AbortSignal.timeout(10000),
+      });
+      if (res.status === 429) {
+        if (i < retries) { await sleep(1000 * (i + 1)); continue; }
+        throw new Error('요청이 너무 많습니다. 잠시 후 다시 시도해주세요.');
+      }
+      if (!res.ok) throw new Error(`Yahoo Finance 요청 실패 (${res.status})`);
+      return await res.json();
+    } catch (err) {
+      if (err.name === 'TimeoutError' && i < retries) { continue; }
+      throw err;
+    }
+  }
 }
 
-// 종목이 유효한 이름을 가지고 있는지 확인
-function isValidName(name, symbol) {
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// Yahoo Finance v8 chart API로 quote + 차트 데이터 통합 조회
+async function fetchYahooData(symbol, range = '6mo') {
+  const intervalMap = { '5d': '15m', '1mo': '1h' };
+  const interval = intervalMap[range] || '1d';
+
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=${range}&interval=${interval}&includePrePost=false`;
+  const data = await fetchWithRetry(url);
+  const chart = data?.chart?.result?.[0];
+  if (!chart) throw new Error('종목을 찾을 수 없습니다.');
+
+  const meta = chart.meta;
+  const timestamps = chart.timestamp || [];
+  const ohlcv = chart.indicators?.quote?.[0] || {};
+
+  const chartData = timestamps.map((t, i) => ({
+    date: new Date(t * 1000).toISOString(),
+    open: ohlcv.open?.[i],
+    high: ohlcv.high?.[i],
+    low: ohlcv.low?.[i],
+    close: ohlcv.close?.[i],
+    volume: ohlcv.volume?.[i]
+  })).filter(d => d.close != null && d.high != null && d.low != null);
+
+  if (chartData.length === 0) throw new Error('차트 데이터가 없습니다.');
+
+  // 전일 대비 계산
+  const currentPrice = meta.regularMarketPrice;
+  let prevClose;
+  if (interval === '1d' && chartData.length >= 2) {
+    prevClose = chartData[chartData.length - 2].close;
+  } else {
+    prevClose = meta.previousClose || meta.chartPreviousClose;
+  }
+  const change = prevClose ? currentPrice - prevClose : 0;
+  const changePercent = prevClose ? (change / prevClose) * 100 : 0;
+
+  return {
+    symbol,
+    quote: {
+      name: meta.shortName || meta.longName || symbol,
+      price: currentPrice,
+      change,
+      changePercent,
+      volume: meta.regularMarketVolume,
+      marketCap: meta.marketCap || null,
+      fiftyTwoWeekHigh: meta.fiftyTwoWeekHigh,
+      fiftyTwoWeekLow: meta.fiftyTwoWeekLow,
+      previousClose: prevClose,
+      dayHigh: meta.regularMarketDayHigh,
+      dayLow: meta.regularMarketDayLow,
+      currency: meta.currency,
+      exchange: meta.fullExchangeName || meta.exchangeName
+    },
+    chartData
+  };
+}
+
+function isValidName(name) {
   if (!name) return false;
-  // Yahoo가 코드+쉼표+이상한 문자열 반환하는 경우
   if (name.includes(',') && name.includes('0P0000')) return false;
   return true;
+}
+
+function getKrStockName(symbol) {
+  const code = symbol.replace(/\.(KS|KQ)$/, '');
+  return KR_STOCK_NAMES[code] || null;
 }
 
 // 주식 데이터 조회 API
 app.get('/api/stock/:symbol', async (req, res) => {
   try {
-    let symbol = req.params.symbol.toUpperCase();
+    let symbol = req.params.symbol.toUpperCase().trim();
     const validPeriods = ['5d', '1mo', '3mo', '6mo', '1y', '2y'];
     const period = validPeriods.includes(req.query.period) ? req.query.period : '6mo';
 
-    // 이미 .KS/.KQ가 붙어있으면 그대로 사용
-    if (/^\d{6}$/.test(symbol)) {
-      symbol = symbol + '.KS';
-    }
+    if (/^\d{6}$/.test(symbol)) symbol += '.KS';
 
     let result;
-    let triedKQ = false;
     try {
       result = await fetchYahooData(symbol, period);
-      // .KS로 가져왔지만 이름이 깨졌으면 .KQ 시도
-      if (symbol.endsWith('.KS') && !isValidName(result.quote.name, symbol)) {
-        const kqSymbol = symbol.replace('.KS', '.KQ');
+      if (symbol.endsWith('.KS') && !isValidName(result.quote.name)) {
         try {
-          const kqResult = await fetchYahooData(kqSymbol, period);
-          result = kqResult;
-          symbol = kqSymbol;
-          triedKQ = true;
+          result = await fetchYahooData(symbol.replace('.KS', '.KQ'), period);
+          symbol = symbol.replace('.KS', '.KQ');
         } catch {}
       }
     } catch (e) {
       if (symbol.endsWith('.KS')) {
         symbol = symbol.replace('.KS', '.KQ');
         result = await fetchYahooData(symbol, period);
-        triedKQ = true;
       } else {
         throw e;
       }
     }
 
     // 한국 종목명 보정
-    const krName = getKrStockName(symbol, null);
-    if (krName) {
-      result.quote.name = krName;
-    } else if (!isValidName(result.quote.name, symbol)) {
-      result.quote.name = symbol.replace(/\.(KS|KQ)$/, '');
-    }
+    const krName = getKrStockName(symbol);
+    if (krName) result.quote.name = krName;
+    else if (!isValidName(result.quote.name)) result.quote.name = symbol.replace(/\.(KS|KQ)$/, '');
 
     result.symbol = symbol;
     res.json({ success: true, ...result });
@@ -171,20 +184,15 @@ app.get('/api/search', async (req, res) => {
     if (!query) return res.json({ results: [] });
 
     const url = `https://query2.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(query)}&quotesCount=8&newsCount=0&listsCount=0`;
-    const response = await fetch(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
-    });
-    const data = await response.json();
-
+    const data = await fetchWithRetry(url, 1);
     const results = (data.quotes || []).map(q => ({
       symbol: q.symbol,
       name: q.shortname || q.longname || q.symbol,
       exchange: q.exchDisp || q.exchange,
       type: q.quoteType
     }));
-
     res.json({ results });
-  } catch (err) {
+  } catch {
     res.json({ results: [] });
   }
 });
@@ -197,12 +205,6 @@ app.post('/api/analyze', async (req, res) => {
       return res.status(400).json({ success: false, error: '유효하지 않은 요청 데이터입니다.' });
     }
 
-    const priceList = chartData.slice(-60).map(d => ({
-      date: new Date(d.date).toLocaleDateString('ko-KR'),
-      close: Math.round(d.close),
-      volume: d.volume
-    }));
-
     const closes = chartData.map(d => d.close);
     const volumes = chartData.map(d => d.volume);
     const ma5 = calcMA(closes, 5);
@@ -213,71 +215,68 @@ app.post('/api/analyze', async (req, res) => {
     const macd = calcMACD(closes);
     const bb = calcBollingerBands(closes, 20);
     const stoch = calcStochastic(chartData, 14);
-
-    // 거래량 분석
     const avgVol20 = calcMA(volumes, 20);
     const currentVol = volumes[volumes.length - 1];
     const volRatio = avgVol20 > 0 ? currentVol / avgVol20 : 1;
-
     const latestClose = closes[closes.length - 1];
+
     const indicators = {
-      MA5: round2(ma5),
-      MA20: round2(ma20),
-      MA60: round2(ma60),
-      MA120: round2(ma120),
-      RSI: round2(rsi),
-      MACD: round2(macd.macd),
-      MACD_Signal: round2(macd.signal),
-      MACD_Histogram: round2(macd.macd - macd.signal),
-      BB_Upper: round2(bb.upper),
-      BB_Middle: round2(bb.middle),
-      BB_Lower: round2(bb.lower),
-      BB_Width: bb.middle !== 0 ? round2(((bb.upper - bb.lower) / bb.middle) * 100) : 0,
-      Stochastic_K: round2(stoch.k),
-      Stochastic_D: round2(stoch.d),
-      현재가: round2(latestClose),
-      거래량비율: round2(volRatio)
+      MA5: r2(ma5), MA20: r2(ma20), MA60: r2(ma60), MA120: r2(ma120),
+      RSI: r2(rsi),
+      MACD: r2(macd.macd), MACD_Signal: r2(macd.signal), MACD_Histogram: r2(macd.macd - macd.signal),
+      BB_Upper: r2(bb.upper), BB_Middle: r2(bb.middle), BB_Lower: r2(bb.lower),
+      BB_Width: bb.middle !== 0 ? r2(((bb.upper - bb.lower) / bb.middle) * 100) : 0,
+      Stochastic_K: r2(stoch.k), Stochastic_D: r2(stoch.d),
+      현재가: r2(latestClose), 거래량비율: r2(volRatio)
     };
 
-    const prompt = `당신은 20년 경력의 주식 애널리스트입니다. 아래 종목 데이터를 분석해주세요.
+    // 최근 30일 가격 요약
+    const priceSummary = chartData.slice(-30).map(d => ({
+      date: new Date(d.date).toLocaleDateString('ko-KR'),
+      close: Math.round(d.close),
+      volume: d.volume
+    }));
 
-## 종목 정보
-- 종목: ${quote.name} (${symbol})
+    const prompt = `당신은 20년 경력의 주식 애널리스트입니다. 아래 종목 데이터를 기반으로 분석 리포트를 작성해주세요.
+
+## 종목: ${quote.name} (${symbol})
 - 현재가: ${quote.price} ${quote.currency || ''}
-- 전일대비: ${quote.change > 0 ? '+' : ''}${round2(quote.change)} (${quote.changePercent > 0 ? '+' : ''}${round2(quote.changePercent)}%)
-- 52주 최고/최저: ${quote.fiftyTwoWeekHigh} / ${quote.fiftyTwoWeekLow}
+- 전일대비: ${quote.change > 0 ? '+' : ''}${r2(quote.change)} (${quote.changePercent > 0 ? '+' : ''}${r2(quote.changePercent)}%)
+- 52주 고/저: ${quote.fiftyTwoWeekHigh} / ${quote.fiftyTwoWeekLow}
 - 거래소: ${quote.exchange}
 
 ## 기술적 지표
 ${JSON.stringify(indicators, null, 2)}
 
-## 최근 가격 데이터 (최근 30일)
-${JSON.stringify(priceList.slice(-30), null, 2)}
+## 최근 30일 가격
+${JSON.stringify(priceSummary, null, 2)}
 
-아래 관점에서 분석해주세요. 마크다운 형식으로 작성하되, 실전 투자에 도움이 되는 구체적인 분석을 해주세요.
+아래 형식으로 분석해주세요:
 
----
-
-# 1. 거시경제 관점 분석
-
-해당 종목이 속한 산업/섹터의 현재 상황, 글로벌 경제 흐름(금리, 환율, 원자재 등)과의 연관성, 정부 정책/규제 영향, 실적 전망 등을 분석해주세요.
-
-핵심 포인트를 불릿으로 정리하고, 해당 종목에 유리한 요인과 불리한 요인을 구분해주세요.
+# 1. 거시경제 관점
+- 해당 산업/섹터 현황
+- 글로벌 경제(금리/환율/원자재)와의 연관성
+- **유리한 요인** (불릿)
+- **불리한 요인** (불릿)
 
 # 2. 차트/기술적 분석
-
-현재 추세(상승/하락/횡보), 지지선과 저항선, 이동평균선 배열(정배열/역배열), RSI/MACD/볼린저밴드/스토캐스틱 해석, 거래량 분석을 포함해주세요.
-
-구체적인 가격대를 언급하면서 매수/매도 관점의 시나리오를 제시해주세요.
+- 추세 판단 (상승/하락/횡보)
+- 지지선/저항선 (구체적 가격)
+- 이동평균선 배열 분석
+- RSI/MACD/볼린저밴드/스토캐스틱 종합 해석
+- 거래량 분석
+- **매수 시나리오** (진입가, 목표가, 손절가)
+- **매도 시나리오** (진입가, 목표가)
 
 # 3. 종합 의견
+| 구분 | 전략 |
+|------|------|
+| 단기 (1~2주) | ... |
+| 중기 (1~3개월) | ... |
+| 핵심 관전 포인트 | ... |
+| 리스크 요인 | ... |
 
-위 분석을 종합하여 단기(1~2주), 중기(1~3개월) 관점의 투자 전략을 제시해주세요.
-핵심 관전 포인트와 리스크 요인도 함께 정리해주세요.
-
----
-
-주의: 투자 권유가 아닌 분석 참고 자료임을 마지막에 명시해주세요.`;
+> 본 분석은 투자 권유가 아닌 참고 자료입니다.`;
 
     const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
     const result = await model.generateContent(prompt);
@@ -286,38 +285,33 @@ ${JSON.stringify(priceList.slice(-30), null, 2)}
     res.json({ success: true, analysis: text, indicators });
   } catch (err) {
     console.error('Analysis error:', err.message);
-    res.status(500).json({ success: false, error: err.message });
+    res.status(500).json({ success: false, error: 'AI 분석 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.' });
   }
 });
 
-// --- 기술적 지표 계산 함수들 ---
-
-function round2(n) {
-  return Math.round(n * 100) / 100;
-}
+// --- 기술적 지표 계산 ---
+function r2(n) { return Math.round((n || 0) * 100) / 100; }
 
 function calcMA(data, period) {
   if (data.length < period) return data[data.length - 1] || 0;
-  const slice = data.slice(-period);
-  return slice.reduce((a, b) => a + b, 0) / period;
+  let sum = 0;
+  for (let i = data.length - period; i < data.length; i++) sum += data[i];
+  return sum / period;
 }
 
 function calcRSI(data, period = 14) {
   if (data.length < period + 1) return 50;
   let avgGain = 0, avgLoss = 0;
-  // 초기 평균
   for (let i = 1; i <= period; i++) {
-    const change = data[i] - data[i - 1];
-    if (change > 0) avgGain += change;
-    else avgLoss += Math.abs(change);
+    const c = data[i] - data[i - 1];
+    if (c > 0) avgGain += c; else avgLoss -= c;
   }
   avgGain /= period;
   avgLoss /= period;
-  // Wilder's smoothing
   for (let i = period + 1; i < data.length; i++) {
-    const change = data[i] - data[i - 1];
-    avgGain = (avgGain * (period - 1) + (change > 0 ? change : 0)) / period;
-    avgLoss = (avgLoss * (period - 1) + (change < 0 ? Math.abs(change) : 0)) / period;
+    const c = data[i] - data[i - 1];
+    avgGain = (avgGain * (period - 1) + Math.max(c, 0)) / period;
+    avgLoss = (avgLoss * (period - 1) + Math.max(-c, 0)) / period;
   }
   if (avgLoss === 0) return 100;
   return 100 - (100 / (1 + avgGain / avgLoss));
@@ -325,30 +319,18 @@ function calcRSI(data, period = 14) {
 
 function calcMACD(data) {
   if (data.length < 26) return { macd: 0, signal: 0 };
-  // EMA 12, 26을 점진적으로 계산 (O(n))
   const k12 = 2 / 13, k26 = 2 / 27, k9 = 2 / 10;
   let ema12 = data.slice(0, 12).reduce((a, b) => a + b, 0) / 12;
   let ema26 = data.slice(0, 26).reduce((a, b) => a + b, 0) / 26;
-  // 12~25 구간: ema12만 갱신
-  for (let i = 12; i < 26; i++) {
-    ema12 = data[i] * k12 + ema12 * (1 - k12);
-  }
-  let macdLine = ema12 - ema26;
-  let signal = macdLine;
-  // 26 이후: 양쪽 갱신 + signal EMA 9
-  let signalInitCount = 0;
-  let signalSum = 0;
+  for (let i = 12; i < 26; i++) ema12 = data[i] * k12 + ema12 * (1 - k12);
+  let macdLine = ema12 - ema26, signal = macdLine;
+  let initCnt = 0, initSum = 0;
   for (let i = 26; i < data.length; i++) {
     ema12 = data[i] * k12 + ema12 * (1 - k12);
     ema26 = data[i] * k26 + ema26 * (1 - k26);
     macdLine = ema12 - ema26;
-    if (signalInitCount < 9) {
-      signalSum += macdLine;
-      signalInitCount++;
-      if (signalInitCount === 9) signal = signalSum / 9;
-    } else {
-      signal = macdLine * k9 + signal * (1 - k9);
-    }
+    if (initCnt < 9) { initSum += macdLine; initCnt++; if (initCnt === 9) signal = initSum / 9; }
+    else signal = macdLine * k9 + signal * (1 - k9);
   }
   return { macd: macdLine, signal };
 }
@@ -357,33 +339,31 @@ function calcBollingerBands(data, period = 20) {
   if (data.length < period) return { upper: 0, middle: 0, lower: 0 };
   const slice = data.slice(-period);
   const mean = slice.reduce((a, b) => a + b, 0) / period;
-  const variance = slice.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / period;
-  const std = Math.sqrt(variance);
+  const std = Math.sqrt(slice.reduce((s, v) => s + (v - mean) ** 2, 0) / period);
   return { upper: mean + 2 * std, middle: mean, lower: mean - 2 * std };
 }
 
 function calcStochastic(chartData, period = 14) {
   if (chartData.length < period) return { k: 50, d: 50 };
   const recent = chartData.slice(-period);
-  const highs = recent.map(d => d.high);
-  const lows = recent.map(d => d.low);
-  const highestHigh = Math.max(...highs);
-  const lowestLow = Math.min(...lows);
-  const currentClose = recent[recent.length - 1].close;
-  const k = highestHigh === lowestLow ? 50 : ((currentClose - lowestLow) / (highestHigh - lowestLow)) * 100;
-  // %D = 3일 SMA of %K (간소화: 최근 3개 계산)
+  const hh = Math.max(...recent.map(d => d.high));
+  const ll = Math.min(...recent.map(d => d.low));
+  const c = recent[recent.length - 1].close;
+  const k = hh === ll ? 50 : ((c - ll) / (hh - ll)) * 100;
   const kValues = [];
   for (let i = Math.max(0, chartData.length - 3); i < chartData.length; i++) {
-    const slice = chartData.slice(Math.max(0, i - period + 1), i + 1);
-    const h = Math.max(...slice.map(d => d.high));
-    const l = Math.min(...slice.map(d => d.low));
-    const c = slice[slice.length - 1].close;
-    kValues.push(h === l ? 50 : ((c - l) / (h - l)) * 100);
+    const sl = chartData.slice(Math.max(0, i - period + 1), i + 1);
+    const h = Math.max(...sl.map(d => d.high));
+    const l = Math.min(...sl.map(d => d.low));
+    kValues.push(h === l ? 50 : ((sl[sl.length - 1].close - l) / (h - l)) * 100);
   }
-  const d = kValues.reduce((a, b) => a + b, 0) / kValues.length;
-  return { k, d };
+  return { k, d: kValues.reduce((a, b) => a + b, 0) / kValues.length };
 }
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`주식 분석기 서버 실행 중: http://localhost:${PORT}`);
 });
+
+// Graceful shutdown
+process.on('SIGTERM', () => { server.close(); process.exit(0); });
+process.on('SIGINT', () => { server.close(); process.exit(0); });

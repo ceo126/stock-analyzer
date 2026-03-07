@@ -4,37 +4,72 @@ let currentQuote = null;
 let priceChart = null;
 let volumeChart = null;
 let resizeObserverRef = null;
-let analyzeController = null; // AbortController for canceling requests
+let analyzeController = null;
+let dropdownIndex = -1; // 키보드 네비게이션용
 
-// 엔터 키 처리
 const symbolInput = document.getElementById('symbolInput');
+
+// 엔터 키 + 키보드 네비게이션
 symbolInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') {
+  const dropdown = document.getElementById('searchDropdown');
+  const items = dropdown ? dropdown.querySelectorAll('.dropdown-item') : [];
+
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    dropdownIndex = Math.min(dropdownIndex + 1, items.length - 1);
+    updateDropdownHighlight(items);
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    dropdownIndex = Math.max(dropdownIndex - 1, -1);
+    updateDropdownHighlight(items);
+  } else if (e.key === 'Enter') {
+    if (dropdownIndex >= 0 && items[dropdownIndex]) {
+      symbolInput.value = items[dropdownIndex].dataset.symbol;
+    }
     hideDropdown();
     analyzeStock();
+  } else if (e.key === 'Escape') {
+    hideDropdown();
   }
 });
+
+function updateDropdownHighlight(items) {
+  items.forEach((item, i) => {
+    item.classList.toggle('highlight', i === dropdownIndex);
+  });
+}
 
 // 자동완성 검색
 let searchTimeout = null;
 symbolInput.addEventListener('input', () => {
   clearTimeout(searchTimeout);
+  dropdownIndex = -1;
   const q = symbolInput.value.trim();
   if (q.length < 1) { hideDropdown(); return; }
 
-  // 로컬 한국 종목 즉시 검색
   const localResults = searchLocalStocks(q);
   if (localResults.length > 0) showDropdown(localResults);
 
-  // 1글자 이상이면 Yahoo API 검색 (로컬 결과와 병합)
   searchTimeout = setTimeout(() => searchSymbols(q, localResults), 200);
+});
+
+// 포커스 시 최근 검색 기록 표시
+symbolInput.addEventListener('focus', () => {
+  if (symbolInput.value.trim()) return;
+  const history = getSearchHistory();
+  if (history.length > 0) {
+    showDropdown(history.map(h => ({
+      symbol: h.symbol,
+      name: h.name,
+      exchange: h.exchange || '최근 검색'
+    })));
+  }
 });
 
 async function searchSymbols(query, localResults = []) {
   try {
     const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
     const data = await res.json();
-    // 로컬 + Yahoo 결과 병합 (중복 제거)
     const localSymbols = new Set(localResults.map(r => r.symbol));
     const yahooResults = (data.results || []).filter(r => !localSymbols.has(r.symbol));
     const merged = [...localResults, ...yahooResults].slice(0, 10);
@@ -44,6 +79,18 @@ async function searchSymbols(query, localResults = []) {
     if (localResults.length > 0) showDropdown(localResults);
     else hideDropdown();
   }
+}
+
+// 최근 검색 기록 (localStorage)
+function getSearchHistory() {
+  try { return JSON.parse(localStorage.getItem('stockSearchHistory') || '[]'); }
+  catch { return []; }
+}
+
+function addSearchHistory(symbol, name, exchange) {
+  const history = getSearchHistory().filter(h => h.symbol !== symbol);
+  history.unshift({ symbol, name, exchange });
+  localStorage.setItem('stockSearchHistory', JSON.stringify(history.slice(0, 8)));
 }
 
 // 한국 주요 종목 로컬 데이터
@@ -126,6 +173,7 @@ function showDropdown(results) {
     dropdown.className = 'search-dropdown';
     symbolInput.parentElement.appendChild(dropdown);
   }
+  dropdownIndex = -1;
   dropdown.innerHTML = results.map(r => {
     const displaySymbol = r.symbol.replace(/\.(KS|KQ)$/, '');
     return `
@@ -146,6 +194,7 @@ function showDropdown(results) {
 }
 
 function hideDropdown() {
+  dropdownIndex = -1;
   const dropdown = document.getElementById('searchDropdown');
   if (dropdown) dropdown.classList.remove('show');
 }
@@ -161,8 +210,21 @@ document.querySelectorAll('.period-btn').forEach(btn => {
     btn.classList.add('active');
     if (currentSymbol) {
       showChartLoading(true);
+      document.getElementById('analysisSection').classList.add('hidden');
+      document.getElementById('indicatorsGrid').innerHTML = '';
       fetchStockData(currentSymbol, btn.dataset.period)
-        .catch(err => showError(err.message))
+        .then(() => {
+          setText('loadingText', 'AI가 종목을 분석하고 있습니다...');
+          show('loading');
+          return fetchAnalysis();
+        })
+        .then(() => {
+          hide('loading');
+        })
+        .catch(err => {
+          hide('loading');
+          showError(err.message);
+        })
         .finally(() => showChartLoading(false));
     }
   });
@@ -177,7 +239,6 @@ async function analyzeStock() {
   const input = document.getElementById('symbolInput').value.trim();
   if (!input) return;
 
-  // 이전 분석 요청 취소
   if (analyzeController) analyzeController.abort();
   analyzeController = new AbortController();
   const signal = analyzeController.signal;
@@ -188,6 +249,9 @@ async function analyzeStock() {
   show('loading');
   hide('error');
   hide('result');
+  document.getElementById('analysisSection').classList.add('hidden');
+  document.getElementById('analysisContent').innerHTML = '';
+  document.getElementById('indicatorsGrid').innerHTML = '';
   setText('loadingText', '주가 데이터를 불러오는 중...');
 
   try {
@@ -195,6 +259,11 @@ async function analyzeStock() {
     await fetchStockData(input, period);
 
     if (signal.aborted) return;
+
+    // 검색 기록 저장
+    if (currentQuote) {
+      addSearchHistory(currentSymbol, currentQuote.name, currentQuote.exchange);
+    }
 
     setText('loadingText', 'AI가 종목을 분석하고 있습니다...');
     await fetchAnalysis(signal);
@@ -264,7 +333,6 @@ function renderSummary(quote, symbol) {
   const changeClass = quote.change >= 0 ? 'up' : 'down';
   const changeSign = quote.change >= 0 ? '+' : '';
 
-  // 52주 대비 위치 (%)
   const range52 = quote.fiftyTwoWeekHigh - quote.fiftyTwoWeekLow;
   const position52 = range52 > 0 ? ((quote.price - quote.fiftyTwoWeekLow) / range52) * 100 : 50;
 
@@ -288,6 +356,10 @@ function renderSummary(quote, symbol) {
         <span class="meta-label">전일종가</span>
         <span class="meta-value">${formatNumber(quote.previousClose)}</span>
       </div>
+      ${quote.dayHigh ? `<div class="meta-item">
+        <span class="meta-label">당일 고/저</span>
+        <span class="meta-value">${formatNumber(quote.dayHigh)} / ${formatNumber(quote.dayLow)}</span>
+      </div>` : ''}
       <div class="meta-item">
         <span class="meta-label">거래량</span>
         <span class="meta-value">${formatVolume(quote.volume)}</span>
@@ -328,7 +400,6 @@ function renderChart(chartData) {
   const priceContainer = document.getElementById('priceChart');
   const volumeContainer = document.getElementById('volumeChart');
 
-  // 가격 차트
   priceChart = LightweightCharts.createChart(priceContainer, {
     width: priceContainer.clientWidth,
     height: 400,
@@ -348,7 +419,7 @@ function renderChart(chartData) {
     },
   });
 
-  // 볼린저밴드 (배경 영역)
+  // 볼린저밴드
   const bbData = calcBBArray(chartData, 20);
   if (bbData.length > 0) {
     const bbUpperSeries = priceChart.addLineSeries({
@@ -532,11 +603,16 @@ function getMAAlignmentDesc(ind) {
 
 function renderAnalysis(markdown) {
   const parsed = marked.parse(markdown, { breaks: true });
-  // 스크립트 태그 제거 (AI 응답 XSS 방지)
   const sanitized = parsed
     .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+    .replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, '')
+    .replace(/<object\b[^<]*(?:(?!<\/object>)<[^<]*)*<\/object>/gi, '')
+    .replace(/<embed[^>]*>/gi, '')
     .replace(/on\w+\s*=\s*"[^"]*"/gi, '')
-    .replace(/on\w+\s*=\s*'[^']*'/gi, '');
+    .replace(/on\w+\s*=\s*'[^']*'/gi, '')
+    .replace(/on\w+\s*=[^\s>]*/gi, '')
+    .replace(/href\s*=\s*["']?\s*javascript:/gi, 'href="')
+    .replace(/src\s*=\s*["']?\s*javascript:/gi, 'src="');
 
   const now = new Date();
   const timeStr = `${now.getFullYear()}.${String(now.getMonth()+1).padStart(2,'0')}.${String(now.getDate()).padStart(2,'0')} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
@@ -565,17 +641,30 @@ function calcMAArray(data, period) {
   return result;
 }
 
+// O(n) 볼린저밴드 계산 (슬라이딩 윈도우)
 function calcBBArray(data, period) {
+  if (data.length < period) return [];
   const result = [];
-  for (let i = period - 1; i < data.length; i++) {
-    const slice = data.slice(i - period + 1, i + 1).map(d => d.close);
-    const mean = slice.reduce((a, b) => a + b, 0) / period;
-    const std = Math.sqrt(slice.reduce((s, v) => s + Math.pow(v - mean, 2), 0) / period);
-    result.push({
-      time: toChartTime(data[i].date),
-      upper: mean + 2 * std,
-      lower: mean - 2 * std
-    });
+  let sum = 0, sumSq = 0;
+  for (let i = 0; i < data.length; i++) {
+    const c = data[i].close;
+    sum += c;
+    sumSq += c * c;
+    if (i >= period) {
+      const old = data[i - period].close;
+      sum -= old;
+      sumSq -= old * old;
+    }
+    if (i >= period - 1) {
+      const mean = sum / period;
+      const variance = sumSq / period - mean * mean;
+      const std = Math.sqrt(Math.max(0, variance));
+      result.push({
+        time: toChartTime(data[i].date),
+        upper: mean + 2 * std,
+        lower: mean - 2 * std
+      });
+    }
   }
   return result;
 }
