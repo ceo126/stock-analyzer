@@ -36,18 +36,21 @@ async function getToken() {
 }
 
 // --- 공통 GET 요청 ---
-async function kisGet(path, trId, params) {
+async function kisGet(path, trId, params, trCont = '') {
   const token = await getToken();
   const qs = new URLSearchParams(params).toString();
 
+  const headers = {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Authorization': `Bearer ${token}`,
+    'appkey': APP_KEY,
+    'appsecret': APP_SECRET,
+    'tr_id': trId,
+  };
+  if (trCont) headers['tr_cont'] = trCont;
+
   const res = await fetch(`${KIS_BASE}${path}?${qs}`, {
-    headers: {
-      'Content-Type': 'application/json; charset=utf-8',
-      'Authorization': `Bearer ${token}`,
-      'appkey': APP_KEY,
-      'appsecret': APP_SECRET,
-      'tr_id': trId,
-    },
+    headers,
     signal: AbortSignal.timeout(10000),
   });
 
@@ -57,6 +60,10 @@ async function kisGet(path, trId, params) {
   if (data.rt_cd !== '0') {
     throw new Error(data.msg1 || `KIS API 오류 (rt_cd: ${data.rt_cd})`);
   }
+
+  // 연속조회 여부 저장
+  data._tr_cont = res.headers.get('tr_cont') || '';
+
   return data;
 }
 
@@ -182,30 +189,42 @@ async function getOverseasQuote(symbol, excd) {
 
   for (const ex of exchanges) {
     try {
-      const data = await kisGet(
+      // 기본 현재가 조회
+      const basicData = await kisGet(
         '/uapi/overseas-price/v1/quotations/price',
         'HHDFS00000300',
         { AUTH: '', EXCD: ex, SYMB: symbol }
       );
 
-      const o = data.output;
-      if (!o || !o.last || o.last === '0' || o.last === '') continue;
+      const b = basicData.output;
+      if (!b || !b.last || b.last === '0' || b.last === '') continue;
 
-      const sign = parseInt(o.sign) || 3;
+      const sign = parseInt(b.sign) || 3;
       const mult = sign >= 4 ? -1 : 1;
 
+      // 상세 현재가 조회 (고/저/시가/52주/종목명)
+      let detail = {};
+      try {
+        const detailData = await kisGet(
+          '/uapi/overseas-price/v1/quotations/price-detail',
+          'HHDFS76200200',
+          { AUTH: '', EXCD: ex, SYMB: symbol }
+        );
+        detail = detailData.output || {};
+      } catch { /* 상세 조회 실패 시 기본 데이터만 사용 */ }
+
       return {
-        name: o.name || symbol,
-        price: parseFloat(o.last) || 0,
-        change: Math.abs(parseFloat(o.diff) || 0) * mult,
-        changePercent: Math.abs(parseFloat(o.rate) || 0) * mult,
-        volume: parseInt(o.tvol) || 0,
-        marketCap: (parseFloat(o.tomv) || 0) * 1000000,
-        fiftyTwoWeekHigh: parseFloat(o.h52p) || null,
-        fiftyTwoWeekLow: parseFloat(o.l52p) || null,
-        previousClose: parseFloat(o.base) || null,
-        dayHigh: parseFloat(o.high) || null,
-        dayLow: parseFloat(o.low) || null,
+        name: detail.e_engn || symbol,
+        price: parseFloat(b.last) || 0,
+        change: Math.abs(parseFloat(b.diff) || 0) * mult,
+        changePercent: Math.abs(parseFloat(b.rate) || 0) * mult,
+        volume: parseInt(b.tvol) || 0,
+        marketCap: null,
+        fiftyTwoWeekHigh: parseFloat(detail.h52p) || null,
+        fiftyTwoWeekLow: parseFloat(detail.l52p) || null,
+        previousClose: parseFloat(b.base) || null,
+        dayHigh: parseFloat(detail.high) || null,
+        dayLow: parseFloat(detail.low) || null,
         currency: ['HKS'].includes(ex) ? 'HKD' : ['TSE'].includes(ex) ? 'JPY' : ['SHS', 'SZS'].includes(ex) ? 'CNY' : 'USD',
         exchange: EXCHANGE_NAMES[ex] || ex,
         _excd: ex,
