@@ -3,6 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const kis = require('./kis-api');
 
 const app = express();
 const PORT = process.env.PORT || 8120;
@@ -27,6 +28,10 @@ if (!process.env.GEMINI_API_KEY) {
   process.exit(1);
 }
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+
+if (!kis.isConfigured()) {
+  console.warn('⚠ KIS_APP_KEY / KIS_APP_SECRET 미설정. KIS API를 사용하려면 .env에 설정해주세요.');
+}
 
 // 서버 안정성 - 예외 처리
 process.on('uncaughtException', (err) => {
@@ -57,163 +62,38 @@ const KR_STOCK_NAMES = {
   '000810': '삼성화재', '024110': '기업은행',
 };
 
-// Yahoo Finance API 호출 (재시도 포함)
-async function fetchWithRetry(url, retries = 2) {
-  for (let i = 0; i <= retries; i++) {
-    try {
-      const res = await fetch(url, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
-        signal: AbortSignal.timeout(10000),
-      });
-      if (res.status === 429) {
-        if (i < retries) { await sleep(1000 * (i + 1)); continue; }
-        throw new Error('요청이 너무 많습니다. 잠시 후 다시 시도해주세요.');
-      }
-      if (!res.ok) throw new Error(`Yahoo Finance 요청 실패 (${res.status})`);
-      return await res.json();
-    } catch (err) {
-      if (err.name === 'TimeoutError' && i < retries) { continue; }
-      throw err;
-    }
-  }
+// 심볼 → 해외 거래소 매핑
+const SUFFIX_TO_EXCD = { '.T': 'TSE', '.HK': 'HKS', '.SS': 'SHS', '.SZ': 'SZS' };
+
+function isDomesticSymbol(symbol) {
+  return /^\d{6}$/.test(symbol) || /^\d{6}\.(KS|KQ)$/.test(symbol);
 }
 
-function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
-
-// Yahoo Finance v8 chart API로 quote + 차트 데이터 통합 조회
-async function fetchYahooData(symbol, range = '6mo') {
-  const intervalMap = { '5d': '15m', '1mo': '1h' };
-  const interval = intervalMap[range] || '1d';
-
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=${range}&interval=${interval}&includePrePost=false`;
-  const data = await fetchWithRetry(url);
-  const chart = data?.chart?.result?.[0];
-  if (!chart) throw new Error('종목을 찾을 수 없습니다.');
-
-  const meta = chart.meta;
-  const timestamps = chart.timestamp || [];
-  const ohlcv = chart.indicators?.quote?.[0] || {};
-
-  const chartData = timestamps.map((t, i) => ({
-    date: new Date(t * 1000).toISOString(),
-    open: ohlcv.open?.[i],
-    high: ohlcv.high?.[i],
-    low: ohlcv.low?.[i],
-    close: ohlcv.close?.[i],
-    volume: ohlcv.volume?.[i]
-  })).filter(d => d.close != null && d.high != null && d.low != null);
-
-  if (chartData.length === 0) throw new Error('차트 데이터가 없습니다.');
-
-  // 전일 대비 계산
-  const currentPrice = meta.regularMarketPrice;
-  let prevClose;
-  if (interval === '1d' && chartData.length >= 2) {
-    prevClose = chartData[chartData.length - 2].close;
-  } else {
-    prevClose = meta.previousClose || meta.chartPreviousClose;
-  }
-  const change = prevClose ? currentPrice - prevClose : 0;
-  const changePercent = prevClose ? (change / prevClose) * 100 : 0;
-
-  return {
-    symbol,
-    quote: {
-      name: meta.shortName || meta.longName || symbol,
-      price: currentPrice,
-      change,
-      changePercent,
-      volume: meta.regularMarketVolume,
-      marketCap: meta.marketCap || null,
-      fiftyTwoWeekHigh: meta.fiftyTwoWeekHigh,
-      fiftyTwoWeekLow: meta.fiftyTwoWeekLow,
-      previousClose: prevClose,
-      dayHigh: meta.regularMarketDayHigh,
-      dayLow: meta.regularMarketDayLow,
-      currency: meta.currency,
-      exchange: meta.fullExchangeName || meta.exchangeName
-    },
-    chartData
-  };
-}
-
-function isValidName(name) {
-  if (!name) return false;
-  if (name.includes(',') && name.includes('0P0000')) return false;
-  return true;
-}
-
-function getKrStockName(symbol) {
-  const code = symbol.replace(/\.(KS|KQ)$/, '');
-  return KR_STOCK_NAMES[code] || null;
-}
-
-// 심볼 형식 검증 (SSRF 방지)
 function isValidSymbol(symbol) {
-  return /^[A-Z0-9]{1,10}(\.(KS|KQ|T|L|HK|SS|SZ))?$/.test(symbol);
+  return /^[A-Z0-9.\-]{1,15}$/.test(symbol);
 }
 
-// 주식 데이터 조회 API
-app.get('/api/stock/:symbol', async (req, res) => {
-  try {
-    let symbol = req.params.symbol.toUpperCase().trim();
-    const validPeriods = ['5d', '1mo', '3mo', '6mo', '1y', '2y'];
-    const period = validPeriods.includes(req.query.period) ? req.query.period : '6mo';
-
-    if (/^\d{6}$/.test(symbol)) symbol += '.KS';
-
-    if (!isValidSymbol(symbol)) {
-      return res.status(400).json({ success: false, error: '유효하지 않은 종목코드 형식입니다.' });
-    }
-
-    let result;
-    try {
-      result = await fetchYahooData(symbol, period);
-      if (symbol.endsWith('.KS') && !isValidName(result.quote.name)) {
-        try {
-          result = await fetchYahooData(symbol.replace('.KS', '.KQ'), period);
-          symbol = symbol.replace('.KS', '.KQ');
-        } catch {}
-      }
-    } catch (e) {
-      if (symbol.endsWith('.KS')) {
-        symbol = symbol.replace('.KS', '.KQ');
-        result = await fetchYahooData(symbol, period);
-      } else {
-        throw e;
-      }
-    }
-
-    // 한국 종목명 보정
-    const krName = getKrStockName(symbol);
-    if (krName) result.quote.name = krName;
-    else if (!isValidName(result.quote.name)) result.quote.name = symbol.replace(/\.(KS|KQ)$/, '');
-
-    result.symbol = symbol;
-    res.json({ success: true, ...result });
-  } catch (err) {
-    console.error('Stock fetch error:', err.message);
-    res.status(400).json({ success: false, error: err.message });
-  }
-});
-
-// 한국 종목 목록 API (클라이언트 중복 제거용)
+// 한국 종목 목록 API
 app.get('/api/kr-stocks', (req, res) => {
   const list = Object.entries(KR_STOCK_NAMES).map(([code, name]) => {
-    const suffix = code.match(/^(042700|196170|086520)$/) ? '.KQ' : '.KS';
+    const suffix = ['042700', '196170', '086520'].includes(code) ? '.KQ' : '.KS';
     return { symbol: code + suffix, name, exchange: suffix === '.KQ' ? 'KOSDAQ' : 'KOSPI' };
   });
   res.json({ stocks: list });
 });
 
-// 종목 검색 API
+// 종목 검색 API (Yahoo 기반 - 검색 전용)
 app.get('/api/search', async (req, res) => {
   try {
     const query = (req.query.q || '').trim().slice(0, 50);
     if (!query) return res.json({ results: [] });
 
     const url = `https://query2.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(query)}&quotesCount=8&newsCount=0&listsCount=0`;
-    const data = await fetchWithRetry(url, 1);
+    const fetchRes = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+      signal: AbortSignal.timeout(5000),
+    });
+    const data = await fetchRes.json();
     const results = (data.quotes || []).map(q => ({
       symbol: q.symbol,
       name: q.shortname || q.longname || q.symbol,
@@ -226,7 +106,60 @@ app.get('/api/search', async (req, res) => {
   }
 });
 
-// AI 분석 API
+// ========================
+//   주식 데이터 조회 API (KIS)
+// ========================
+app.get('/api/stock/:symbol', async (req, res) => {
+  try {
+    if (!kis.isConfigured()) {
+      return res.status(500).json({ success: false, error: 'KIS API 키가 설정되지 않았습니다. .env 파일에 KIS_APP_KEY와 KIS_APP_SECRET을 설정해주세요.' });
+    }
+
+    let symbol = req.params.symbol.toUpperCase().trim();
+    const validPeriods = ['5d', '1mo', '3mo', '6mo', '1y', '2y'];
+    const period = validPeriods.includes(req.query.period) ? req.query.period : '6mo';
+
+    if (!isValidSymbol(symbol)) {
+      return res.status(400).json({ success: false, error: '유효하지 않은 종목코드 형식입니다.' });
+    }
+
+    let quote, chartData;
+
+    if (isDomesticSymbol(symbol)) {
+      // 국내주식
+      const stockCode = symbol.replace(/\.(KS|KQ)$/, '');
+      quote = await kis.getDomesticQuote(stockCode);
+      chartData = await kis.getDomesticChart(stockCode, period);
+      symbol = stockCode;
+    } else {
+      // 해외주식 - 거래소 코드 추출
+      let excd = null;
+      for (const [suffix, exchange] of Object.entries(SUFFIX_TO_EXCD)) {
+        if (symbol.endsWith(suffix)) {
+          excd = exchange;
+          symbol = symbol.replace(suffix, '');
+          break;
+        }
+      }
+
+      quote = await kis.getOverseasQuote(symbol, excd);
+      chartData = await kis.getOverseasChart(symbol, quote._excd, period);
+    }
+
+    if (chartData.length === 0) {
+      throw new Error('차트 데이터가 없습니다.');
+    }
+
+    res.json({ success: true, symbol, quote, chartData });
+  } catch (err) {
+    console.error('Stock fetch error:', err.message);
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+// ========================
+//   AI 분석 API
+// ========================
 app.post('/api/analyze', async (req, res) => {
   try {
     const { symbol, quote, chartData } = req.body;
@@ -259,7 +192,6 @@ app.post('/api/analyze', async (req, res) => {
       현재가: r2(latestClose), 거래량비율: r2(volRatio)
     };
 
-    // 최근 30일 가격 요약
     const priceSummary = chartData.slice(-30).map(d => ({
       date: new Date(d.date).toLocaleDateString('ko-KR'),
       close: Math.round(d.close),
@@ -394,8 +326,8 @@ function calcStochastic(chartData, period = 14) {
 
 const server = app.listen(PORT, () => {
   console.log(`주식 분석기 서버 실행 중: http://localhost:${PORT}`);
+  console.log(`데이터 소스: ${kis.isConfigured() ? 'KIS (한국투자증권)' : '⚠ KIS 미설정'}`);
 });
 
-// Graceful shutdown
 process.on('SIGTERM', () => { server.close(); process.exit(0); });
 process.on('SIGINT', () => { server.close(); process.exit(0); });
