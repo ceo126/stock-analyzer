@@ -8,7 +8,7 @@ const kis = require('./kis-api');
 const app = express();
 const PORT = process.env.PORT || 8120;
 
-app.use(cors());
+app.use(cors({ origin: [`http://localhost:${process.env.PORT || 8120}`, 'http://127.0.0.1:' + (process.env.PORT || 8120)] }));
 app.use(express.json({ limit: '1mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -242,7 +242,7 @@ ${JSON.stringify(priceSummary, null, 2)}
     const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
     const result = await Promise.race([
       model.generateContent(prompt),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('AI 분석 시간이 초과되었습니다. 다시 시도해주세요.')), 60000))
+      new Promise((_, reject) => setTimeout(() => reject(new Error('AI 분석 시간이 초과되었습니다. 다시 시도해주세요.')), 120000))
     ]);
     const text = result.response.text();
 

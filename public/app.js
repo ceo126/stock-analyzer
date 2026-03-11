@@ -5,6 +5,7 @@ let priceChart = null;
 let volumeChart = null;
 let resizeObserverRef = null;
 let analyzeController = null;
+let periodController = null;
 let dropdownIndex = -1; // 키보드 네비게이션용
 
 const symbolInput = document.getElementById('symbolInput');
@@ -159,20 +160,26 @@ document.querySelectorAll('.period-btn').forEach(btn => {
     document.querySelectorAll('.period-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     if (currentSymbol) {
+      if (periodController) periodController.abort();
+      periodController = new AbortController();
+      const pSignal = periodController.signal;
+
       showChartLoading(true);
       document.getElementById('analysisSection').classList.add('hidden');
       document.getElementById('indicatorsGrid').innerHTML = '';
       fetchStockData(currentSymbol, btn.dataset.period)
         .then(() => {
+          if (pSignal.aborted) return;
           showChartLoading(false);
           setText('loadingText', 'AI가 종목을 분석하고 있습니다...');
           show('loading');
-          return fetchAnalysis();
+          return fetchAnalysis(pSignal);
         })
         .then(() => {
-          hide('loading');
+          if (!pSignal.aborted) hide('loading');
         })
         .catch(err => {
+          if (err.name === 'AbortError') return;
           hide('loading');
           showChartLoading(false);
           showError(err.message);
