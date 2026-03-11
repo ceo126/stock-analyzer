@@ -578,7 +578,11 @@ function renderAnalysis(markdown) {
 // --- 유틸리티 ---
 
 function toChartTime(dateStr) {
-  return Math.floor(new Date(dateStr).getTime() / 1000);
+  const d = new Date(dateStr);
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(d.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 
 function calcMAArray(data, period) {
