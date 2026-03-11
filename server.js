@@ -129,6 +129,10 @@ app.get('/api/stock/:symbol', async (req, res) => {
       // 국내주식
       const stockCode = symbol.replace(/\.(KS|KQ)$/, '');
       quote = await kis.getDomesticQuote(stockCode);
+      // KIS API가 종목명을 반환하지 않을 경우 내장 매핑으로 보완
+      if (!quote.name || quote.name === stockCode) {
+        quote.name = KR_STOCK_NAMES[stockCode] || stockCode;
+      }
       chartData = await kis.getDomesticChart(stockCode, period);
       symbol = stockCode;
     } else {
