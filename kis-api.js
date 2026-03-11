@@ -1,7 +1,7 @@
 require('dotenv').config();
 
 const KIS_BASE = process.env.KIS_MOCK === 'true'
-  ? 'https://openapivps.koreainvestment.com:29443'
+  ? 'https://openapivts.koreainvestment.com:29443'
   : 'https://openapi.koreainvestment.com:9443';
 
 const APP_KEY = process.env.KIS_APP_KEY;
