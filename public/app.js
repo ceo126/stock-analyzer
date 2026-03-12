@@ -6,7 +6,7 @@ let volumeChart = null;
 let resizeObserverRef = null;
 let analyzeController = null;
 let periodController = null;
-let dropdownIndex = -1; // 키보드 네비게이션용
+let dropdownIndex = -1;
 
 const symbolInput = document.getElementById('symbolInput');
 
@@ -54,7 +54,6 @@ symbolInput.addEventListener('input', () => {
   searchTimeout = setTimeout(() => searchSymbols(q, localResults), 200);
 });
 
-// 포커스 시 최근 검색 기록 표시
 symbolInput.addEventListener('focus', () => {
   if (symbolInput.value.trim()) return;
   const history = getSearchHistory();
@@ -82,7 +81,6 @@ async function searchSymbols(query, localResults = []) {
   }
 }
 
-// 최근 검색 기록 (localStorage)
 function getSearchHistory() {
   try { return JSON.parse(localStorage.getItem('stockSearchHistory') || '[]'); }
   catch { return []; }
@@ -94,7 +92,6 @@ function addSearchHistory(symbol, name, exchange) {
   localStorage.setItem('stockSearchHistory', JSON.stringify(history.slice(0, 8)));
 }
 
-// 한국 주요 종목 (서버에서 로드)
 let KR_STOCKS = [];
 fetch('/api/kr-stocks').then(r => r.json()).then(data => { KR_STOCKS = data.stocks || []; }).catch(() => {});
 
@@ -218,7 +215,6 @@ async function analyzeStock() {
 
     if (signal.aborted) return;
 
-    // 검색 기록 저장
     if (currentQuote) {
       addSearchHistory(currentSymbol, currentQuote.name, currentQuote.exchange);
     }
@@ -272,7 +268,6 @@ async function fetchAnalysis(signal) {
   renderAnalysis(data.analysis);
 }
 
-// 재분석
 async function reAnalyze() {
   const btn = document.getElementById('reAnalyzeBtn');
   btn.disabled = true;
@@ -287,52 +282,68 @@ async function reAnalyze() {
   }
 }
 
+// ==================== 네이버 스타일 렌더링 ====================
+
 function renderSummary(quote, symbol) {
-  const changeClass = quote.change >= 0 ? 'up' : 'down';
-  const changeSign = quote.change >= 0 ? '+' : '';
+  const isUp = quote.change >= 0;
+  const cls = isUp ? 'up' : 'down';
+  const sign = isUp ? '+' : '';
+  const arrow = isUp ? '▲' : '▼';
 
-  const range52 = quote.fiftyTwoWeekHigh - quote.fiftyTwoWeekLow;
-  const position52 = range52 > 0 ? ((quote.price - quote.fiftyTwoWeekLow) / range52) * 100 : 50;
+  const range52 = (quote.fiftyTwoWeekHigh || 0) - (quote.fiftyTwoWeekLow || 0);
+  const pos52 = range52 > 0 ? ((quote.price - quote.fiftyTwoWeekLow) / range52) * 100 : 50;
 
+  // 종목 헤더
   document.getElementById('stockSummary').innerHTML = `
-    <div class="stock-name-block">
-      <div class="stock-name">${escapeHtml(quote.name)}</div>
-      <div class="stock-symbol">${escapeHtml(symbol)} · ${escapeHtml(quote.exchange)}</div>
+    <div class="stock-title">${escapeHtml(quote.name)}</div>
+    <div class="stock-code">${escapeHtml(quote.exchange)} ${escapeHtml(symbol)}</div>
+    <div class="stock-price-main ${cls}">${formatNumber(quote.price)}</div>
+    <div class="stock-change-info ${cls}">
+      ${sign}${formatNumber(Math.abs(quote.change))} ${arrow} ${Math.abs(quote.changePercent || 0).toFixed(2)}%
     </div>
-    <div class="stock-price-block">
-      <div class="stock-price">${formatNumber(quote.price)} ${quote.currency || ''}</div>
-      <div class="stock-change ${changeClass}">
-        ${changeSign}${formatNumber(quote.change)} (${changeSign}${quote.changePercent?.toFixed(2)}%)
+  `;
+
+  // 52주 범위
+  document.getElementById('rangeSection').innerHTML = `
+    <div class="range-row">
+      <div class="range-label-left">52주 최저<span>${formatNumber(quote.fiftyTwoWeekLow)}</span></div>
+      <div class="range-track">
+        <div class="range-pointer" style="left: ${Math.min(100, Math.max(0, pos52))}%"></div>
       </div>
+      <div class="range-label-right">52주 최고<span>${formatNumber(quote.fiftyTwoWeekHigh)}</span></div>
     </div>
-    <div class="stock-meta">
-      ${quote.marketCap ? `<div class="meta-item">
-        <span class="meta-label">시가총액</span>
-        <span class="meta-value">${formatMarketCap(quote.marketCap, quote.currency)}</span>
-      </div>` : ''}
-      <div class="meta-item">
-        <span class="meta-label">전일종가</span>
-        <span class="meta-value">${formatNumber(quote.previousClose)}</span>
+  `;
+
+  // 시세 정보 테이블
+  document.getElementById('infoTable').innerHTML = `
+    <div class="info-grid">
+      <div class="info-cell">
+        <span class="info-label">전일</span>
+        <span class="info-value">${formatNumber(quote.previousClose)}</span>
       </div>
-      ${quote.dayHigh ? `<div class="meta-item">
-        <span class="meta-label">당일 고/저</span>
-        <span class="meta-value">${formatNumber(quote.dayHigh)} / ${formatNumber(quote.dayLow)}</span>
-      </div>` : ''}
-      <div class="meta-item">
-        <span class="meta-label">거래량</span>
-        <span class="meta-value">${formatVolume(quote.volume)}</span>
+      <div class="info-cell">
+        <span class="info-label">고가</span>
+        <span class="info-value up">${formatNumber(quote.dayHigh)}</span>
       </div>
-      <div class="meta-item meta-item-wide">
-        <span class="meta-label">52주 범위</span>
-        <div class="range-52w">
-          <span class="range-low">${formatNumber(quote.fiftyTwoWeekLow)}</span>
-          <div class="range-bar">
-            <div class="range-fill" style="width: ${Math.min(100, Math.max(0, position52))}%"></div>
-            <div class="range-marker" style="left: ${Math.min(100, Math.max(0, position52))}%"></div>
-          </div>
-          <span class="range-high">${formatNumber(quote.fiftyTwoWeekHigh)}</span>
-        </div>
+      <div class="info-cell">
+        <span class="info-label">시가</span>
+        <span class="info-value">${formatNumber(quote.price)}</span>
       </div>
+      <div class="info-cell">
+        <span class="info-label">저가</span>
+        <span class="info-value down">${formatNumber(quote.dayLow)}</span>
+      </div>
+      <div class="info-cell">
+        <span class="info-label">거래량</span>
+        <span class="info-value">${quote.volume ? quote.volume.toLocaleString() + '주' : 'N/A'}</span>
+      </div>
+      ${quote.marketCap ? `<div class="info-cell">
+        <span class="info-label">시가총액</span>
+        <span class="info-value">${formatMarketCap(quote.marketCap, quote.currency)}</span>
+      </div>` : `<div class="info-cell">
+        <span class="info-label">통화</span>
+        <span class="info-value">${quote.currency || '-'}</span>
+      </div>`}
     </div>
   `;
 }
@@ -360,52 +371,37 @@ function renderChart(chartData) {
 
   priceChart = LightweightCharts.createChart(priceContainer, {
     width: priceContainer.clientWidth,
-    height: 400,
+    height: 360,
     layout: {
       background: { color: 'transparent' },
-      textColor: '#8b95a5',
+      textColor: '#999',
+      fontSize: 11,
     },
     grid: {
-      vertLines: { color: '#f0f2f5' },
-      horzLines: { color: '#f0f2f5' },
+      vertLines: { color: '#f0f0f0' },
+      horzLines: { color: '#f0f0f0' },
     },
     crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
-    rightPriceScale: { borderColor: '#e4e8ee' },
+    rightPriceScale: {
+      borderColor: '#e0e0e0',
+      scaleMargins: { top: 0.05, bottom: 0.05 },
+    },
     timeScale: {
-      borderColor: '#e4e8ee',
-      timeVisible: true,
+      borderColor: '#e0e0e0',
+      timeVisible: false,
+      rightOffset: 2,
+      barSpacing: 6,
     },
   });
 
-  // 볼린저밴드
-  const bbData = calcBBArray(chartData, 20);
-  if (bbData.length > 0) {
-    const bbUpperSeries = priceChart.addLineSeries({
-      color: 'rgba(79,110,247,0.25)',
-      lineWidth: 1,
-      lineStyle: 2,
-      title: 'BB Upper',
-      crosshairMarkerVisible: false,
-    });
-    const bbLowerSeries = priceChart.addLineSeries({
-      color: 'rgba(79,110,247,0.25)',
-      lineWidth: 1,
-      lineStyle: 2,
-      title: 'BB Lower',
-      crosshairMarkerVisible: false,
-    });
-    bbUpperSeries.setData(bbData.map(d => ({ time: d.time, value: d.upper })));
-    bbLowerSeries.setData(bbData.map(d => ({ time: d.time, value: d.lower })));
-  }
-
-  // 캔들스틱
+  // 캔들스틱 (한국 주식 색상: 빨간=상승, 파란=하락)
   const candleSeries = priceChart.addCandlestickSeries({
-    upColor: '#16a34a',
-    downColor: '#e53e3e',
-    borderDownColor: '#e53e3e',
-    borderUpColor: '#16a34a',
-    wickDownColor: '#e53e3e',
-    wickUpColor: '#16a34a',
+    upColor: '#e22926',
+    downColor: '#2679ed',
+    borderDownColor: '#2679ed',
+    borderUpColor: '#e22926',
+    wickDownColor: '#2679ed',
+    wickUpColor: '#e22926',
   });
 
   candleSeries.setData(chartData.map(d => ({
@@ -418,15 +414,21 @@ function renderChart(chartData) {
 
   // 이동평균선
   const maConfigs = [
-    { period: 5, color: '#eab308', title: 'MA5' },
-    { period: 20, color: '#4f6ef7', title: 'MA20' },
-    { period: 60, color: '#a855f7', title: 'MA60' },
-    { period: 120, color: '#e53e3e', title: 'MA120' },
+    { period: 5, color: '#f59e0b' },
+    { period: 20, color: '#3b82f6' },
+    { period: 60, color: '#8b5cf6' },
+    { period: 120, color: '#ef4444' },
   ];
 
-  maConfigs.forEach(({ period, color, title }) => {
+  maConfigs.forEach(({ period, color }) => {
     if (chartData.length >= period) {
-      const series = priceChart.addLineSeries({ color, lineWidth: 1, title });
+      const series = priceChart.addLineSeries({
+        color,
+        lineWidth: 1,
+        crosshairMarkerVisible: false,
+        lastValueVisible: false,
+        priceLineVisible: false,
+      });
       series.setData(calcMAArray(chartData, period));
     }
   });
@@ -436,16 +438,17 @@ function renderChart(chartData) {
   // 거래량 차트
   volumeChart = LightweightCharts.createChart(volumeContainer, {
     width: volumeContainer.clientWidth,
-    height: 100,
+    height: 80,
     layout: {
       background: { color: 'transparent' },
-      textColor: '#8b95a5',
+      textColor: '#999',
+      fontSize: 10,
     },
     grid: {
       vertLines: { visible: false },
-      horzLines: { color: '#f0f2f5' },
+      horzLines: { color: '#f0f0f0' },
     },
-    rightPriceScale: { borderColor: '#e4e8ee' },
+    rightPriceScale: { borderColor: '#e0e0e0' },
     timeScale: { visible: false },
   });
 
@@ -456,7 +459,7 @@ function renderChart(chartData) {
   volumeSeries.setData(chartData.map(d => ({
     time: toChartTime(d.date),
     value: d.volume,
-    color: d.close >= d.open ? 'rgba(22,163,74,0.35)' : 'rgba(229,62,62,0.35)',
+    color: d.close >= d.open ? 'rgba(226,41,38,0.3)' : 'rgba(38,121,237,0.3)',
   })));
 
   volumeChart.timeScale().fitContent();
@@ -482,53 +485,51 @@ function renderIndicators(indicators) {
       label: 'RSI (14)',
       value: indicators.RSI,
       cls: indicators.RSI > 70 ? 'bearish' : indicators.RSI < 30 ? 'bullish' : 'neutral',
-      desc: indicators.RSI > 70 ? '과매수 구간' : indicators.RSI < 30 ? '과매도 구간' : '중립 구간'
+      desc: indicators.RSI > 70 ? '과매수' : indicators.RSI < 30 ? '과매도' : '중립'
     },
     {
       label: 'MACD',
       value: indicators.MACD,
       cls: indicators.MACD_Histogram > 0 ? 'bullish' : 'bearish',
-      desc: `시그널: ${indicators.MACD_Signal} / 히스토그램: ${indicators.MACD_Histogram > 0 ? '+' : ''}${indicators.MACD_Histogram}`
+      desc: `신호: ${indicators.MACD_Signal}`
     },
     {
       label: '스토캐스틱',
-      value: `${indicators.Stochastic_K} / ${indicators.Stochastic_D}`,
+      value: `${indicators.Stochastic_K}`,
       cls: indicators.Stochastic_K > 80 ? 'bearish' : indicators.Stochastic_K < 20 ? 'bullish' : 'neutral',
-      desc: indicators.Stochastic_K > 80 ? '과매수 구간' : indicators.Stochastic_K < 20 ? '과매도 구간' : '중립 구간'
-    },
-    {
-      label: '5일 이평선',
-      value: formatNumber(indicators.MA5),
-      cls: indicators.현재가 > indicators.MA5 ? 'bullish' : 'bearish',
-      desc: indicators.현재가 > indicators.MA5 ? '단기 상승 추세' : '단기 하락 추세'
-    },
-    {
-      label: '20일 이평선',
-      value: formatNumber(indicators.MA20),
-      cls: indicators.현재가 > indicators.MA20 ? 'bullish' : 'bearish',
-      desc: indicators.현재가 > indicators.MA20 ? '중기 상승 추세' : '중기 하락 추세'
-    },
-    {
-      label: '볼린저밴드',
-      value: `폭 ${indicators.BB_Width}%`,
-      cls: indicators.현재가 > indicators.BB_Upper ? 'bearish' :
-           indicators.현재가 < indicators.BB_Lower ? 'bullish' : 'neutral',
-      desc: indicators.현재가 > indicators.BB_Upper ? '상단 돌파 (과열)' :
-            indicators.현재가 < indicators.BB_Lower ? '하단 이탈 (반등 기대)' :
-            `${formatNumber(indicators.BB_Lower)} ~ ${formatNumber(indicators.BB_Upper)}`
-    },
-    {
-      label: '거래량',
-      value: `${indicators.거래량비율}x`,
-      cls: indicators.거래량비율 > 2 ? 'bullish' : indicators.거래량비율 < 0.5 ? 'bearish' : 'neutral',
-      desc: indicators.거래량비율 > 2 ? '평균 대비 급증' :
-            indicators.거래량비율 < 0.5 ? '평균 대비 부진' : '20일 평균 대비'
+      desc: indicators.Stochastic_K > 80 ? '과매수' : indicators.Stochastic_K < 20 ? '과매도' : '중립'
     },
     {
       label: '이평선 배열',
       value: getMAAlignment(indicators),
       cls: getMAAlignmentClass(indicators),
       desc: getMAAlignmentDesc(indicators)
+    },
+    {
+      label: 'MA5',
+      value: formatNumber(indicators.MA5),
+      cls: indicators.현재가 > indicators.MA5 ? 'bullish' : 'bearish',
+      desc: indicators.현재가 > indicators.MA5 ? '상승' : '하락'
+    },
+    {
+      label: 'MA20',
+      value: formatNumber(indicators.MA20),
+      cls: indicators.현재가 > indicators.MA20 ? 'bullish' : 'bearish',
+      desc: indicators.현재가 > indicators.MA20 ? '상승' : '하락'
+    },
+    {
+      label: '볼린저',
+      value: `${indicators.BB_Width}%`,
+      cls: indicators.현재가 > indicators.BB_Upper ? 'bearish' :
+           indicators.현재가 < indicators.BB_Lower ? 'bullish' : 'neutral',
+      desc: indicators.현재가 > indicators.BB_Upper ? '과열' :
+            indicators.현재가 < indicators.BB_Lower ? '반등 기대' : '밴드 내'
+    },
+    {
+      label: '거래량',
+      value: `${indicators.거래량비율}x`,
+      cls: indicators.거래량비율 > 2 ? 'bullish' : indicators.거래량비율 < 0.5 ? 'bearish' : 'neutral',
+      desc: indicators.거래량비율 > 2 ? '급증' : indicators.거래량비율 < 0.5 ? '부진' : '보통'
     }
   ];
 
@@ -554,9 +555,9 @@ function getMAAlignmentClass(ind) {
 }
 
 function getMAAlignmentDesc(ind) {
-  if (ind.MA5 > ind.MA20 && ind.MA20 > ind.MA60) return '강한 상승 추세';
-  if (ind.MA5 < ind.MA20 && ind.MA20 < ind.MA60) return '강한 하락 추세';
-  return '추세 전환 가능성';
+  if (ind.MA5 > ind.MA20 && ind.MA20 > ind.MA60) return '강세';
+  if (ind.MA5 < ind.MA20 && ind.MA20 < ind.MA60) return '약세';
+  return '전환 가능';
 }
 
 function renderAnalysis(markdown) {
@@ -579,10 +580,7 @@ function renderAnalysis(markdown) {
 
 function toChartTime(dateStr) {
   const d = new Date(dateStr);
-  const y = d.getUTCFullYear();
-  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(d.getUTCDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
+  return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, day: d.getUTCDate() };
 }
 
 function calcMAArray(data, period) {
@@ -598,7 +596,6 @@ function calcMAArray(data, period) {
   return result;
 }
 
-// O(n) 볼린저밴드 계산 (슬라이딩 윈도우)
 function calcBBArray(data, period) {
   if (data.length < period) return [];
   const result = [];
@@ -627,12 +624,12 @@ function calcBBArray(data, period) {
 }
 
 function formatNumber(num) {
-  if (num == null || isNaN(num)) return 'N/A';
+  if (num == null || isNaN(num)) return '-';
   return Number(num).toLocaleString('ko-KR', { maximumFractionDigits: 2 });
 }
 
 function formatMarketCap(cap, currency) {
-  if (!cap) return 'N/A';
+  if (!cap) return '-';
   if (currency === 'KRW') {
     if (cap >= 1e12) return (cap / 1e12).toFixed(1) + '조';
     if (cap >= 1e8) return (cap / 1e8).toFixed(0) + '억';
@@ -645,7 +642,7 @@ function formatMarketCap(cap, currency) {
 }
 
 function formatVolume(vol) {
-  if (!vol) return 'N/A';
+  if (!vol) return '-';
   if (vol >= 1e6) return (vol / 1e6).toFixed(1) + 'M';
   if (vol >= 1e3) return (vol / 1e3).toFixed(0) + 'K';
   return vol.toLocaleString();
@@ -656,7 +653,7 @@ function hide(id) { document.getElementById(id).classList.add('hidden'); }
 function setText(id, text) { document.getElementById(id).textContent = text; }
 
 function showChartLoading(on) {
-  const container = document.querySelector('.chart-container');
+  const container = document.querySelector('.chart-section');
   if (!container) return;
   if (on) container.classList.add('chart-loading');
   else container.classList.remove('chart-loading');

@@ -7,6 +7,8 @@
   <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.6/dist/purify.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -14,14 +16,13 @@
     <!-- 헤더 -->
     <header class="header">
       <h1>AI 주식 <span class="accent">분석기</span></h1>
-      <p class="subtitle">거시경제 + 기술적 분석 리포트</p>
     </header>
 
     <!-- 검색 -->
     <div class="search-section">
       <div class="search-box">
-        <input type="text" id="symbolInput" placeholder="종목코드 입력 (예: AAPL, 005930, TSLA)" autocomplete="off">
-        <button id="searchBtn" onclick="analyzeStock()">분석</button>
+        <input type="text" id="symbolInput" placeholder="종목명 또는 코드 입력 (예: 삼성전자, AAPL)" autocomplete="off">
+        <button id="searchBtn" onclick="analyzeStock()">검색</button>
       </div>
       <div class="quick-tags">
         <span onclick="setSymbol('005930')">삼성전자</span>
@@ -29,7 +30,6 @@
         <span onclick="setSymbol('AAPL')">Apple</span>
         <span onclick="setSymbol('TSLA')">Tesla</span>
         <span onclick="setSymbol('NVDA')">NVIDIA</span>
-        <span onclick="setSymbol('MSFT')">Microsoft</span>
       </div>
     </div>
 
@@ -44,11 +44,22 @@
 
     <!-- 결과 영역 -->
     <div id="result" class="result hidden">
-      <!-- 종목 요약 -->
-      <div class="stock-summary" id="stockSummary"></div>
 
-      <!-- 기간 선택 + 재분석 -->
-      <div class="controls-row">
+      <!-- 종목 헤더 (네이버 스타일) -->
+      <div class="stock-header" id="stockSummary"></div>
+
+      <!-- 차트 영역 -->
+      <div class="chart-section">
+        <div class="chart-top-bar">
+          <div class="chart-legend">
+            <span class="legend-dot" style="background:#f59e0b"></span><span>5</span>
+            <span class="legend-dot" style="background:#3b82f6"></span><span>20</span>
+            <span class="legend-dot" style="background:#8b5cf6"></span><span>60</span>
+            <span class="legend-dot" style="background:#ef4444"></span><span>120</span>
+          </div>
+        </div>
+        <div id="priceChart" class="chart"></div>
+        <div id="volumeChart" class="volume-chart"></div>
         <div class="period-selector">
           <button class="period-btn" data-period="5d">5일</button>
           <button class="period-btn" data-period="1mo">1개월</button>
@@ -57,28 +68,23 @@
           <button class="period-btn" data-period="1y">1년</button>
           <button class="period-btn" data-period="2y">2년</button>
         </div>
-        <button id="reAnalyzeBtn" class="re-analyze-btn" onclick="reAnalyze()">재분석</button>
       </div>
 
-      <!-- 차트 -->
-      <div class="chart-container">
-        <div class="chart-legend">
-          <span class="legend-item"><span class="legend-color" style="background:#eab308"></span>MA5</span>
-          <span class="legend-item"><span class="legend-color" style="background:#4f6ef7"></span>MA20</span>
-          <span class="legend-item"><span class="legend-color" style="background:#a855f7"></span>MA60</span>
-          <span class="legend-item"><span class="legend-color" style="background:#e53e3e"></span>MA120</span>
-          <span class="legend-item"><span class="legend-color" style="background:rgba(79,110,247,0.4);border:1px dashed rgba(79,110,247,0.6)"></span>BB</span>
-        </div>
-        <div id="priceChart" class="chart"></div>
-        <div id="volumeChart" class="volume-chart"></div>
-      </div>
+      <!-- 52주 범위 -->
+      <div class="range-section" id="rangeSection"></div>
+
+      <!-- 시세 정보 테이블 -->
+      <div class="info-table" id="infoTable"></div>
 
       <!-- 기술적 지표 카드 -->
       <div class="indicators-grid" id="indicatorsGrid"></div>
 
       <!-- AI 분석 -->
       <div class="analysis-section hidden" id="analysisSection">
-        <h2>AI 분석 리포트</h2>
+        <div class="analysis-header">
+          <h2>AI 분석 리포트</h2>
+          <button id="reAnalyzeBtn" class="re-analyze-btn" onclick="reAnalyze()">재분석</button>
+        </div>
         <div id="analysisContent" class="analysis-content"></div>
       </div>
     </div>
