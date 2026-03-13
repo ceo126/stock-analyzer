@@ -10,6 +10,8 @@
   <meta property="og:type" content="website">
   <meta name="theme-color" content="#4f6ef7">
   <link rel="manifest" href="/manifest.json">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>">
+  <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>">
   <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.6/dist/purify.min.js"></script>
@@ -58,8 +60,8 @@
     <!-- 검색 -->
     <div class="search-section">
       <div class="search-box">
-        <input type="text" id="symbolInput" placeholder="종목명 또는 코드 입력 (예: 삼성전자, AAPL)" autocomplete="off">
-        <button id="searchBtn" onclick="analyzeStock()">검색</button>
+        <input type="text" id="symbolInput" placeholder="종목명 또는 코드 (예: 삼성전자, AAPL)" autocomplete="off">
+        <button id="searchBtn" onclick="analyzeStock()">분석</button>
       </div>
 
       <!-- 비교 모드 -->
@@ -69,7 +71,7 @@
           <span>종목 비교</span>
         </label>
         <div class="compare-inputs hidden" id="compareInputs">
-          <input type="text" id="compareSymbol" placeholder="비교 종목 (예: SK하이닉스)" class="compare-input">
+          <input type="text" id="compareSymbol" placeholder="비교 종목 (예: SK하이닉스)" class="compare-input" onkeydown="if(event.key==='Enter')addCompareSymbol()">
           <button class="compare-add-btn" onclick="addCompareSymbol()">추가</button>
           <div class="compare-chips" id="compareChips"></div>
         </div>
@@ -82,15 +84,15 @@
         <span onclick="setSymbol('TSLA')">Tesla</span>
         <span onclick="setSymbol('NVDA')">NVIDIA</span>
       </div>
-      <div class="shortcut-hint">/ 키로 검색, D 다크모드, W 워치리스트</div>
+      <div class="shortcut-hint">/ 검색 &middot; D 다크모드 &middot; W 워치리스트</div>
     </div>
 
     <!-- 프로그레스 바 -->
     <div id="progressBar" class="progress-bar hidden">
       <div class="progress-steps">
-        <div class="progress-step" data-step="data"><span class="step-dot"></span><span class="step-label">데이터 수집</span></div>
-        <div class="progress-step" data-step="indicator"><span class="step-dot"></span><span class="step-label">지표 계산</span></div>
-        <div class="progress-step" data-step="news"><span class="step-dot"></span><span class="step-label">뉴스 수집</span></div>
+        <div class="progress-step" data-step="data"><span class="step-dot"></span><span class="step-label">데이터</span></div>
+        <div class="progress-step" data-step="indicator"><span class="step-dot"></span><span class="step-label">지표</span></div>
+        <div class="progress-step" data-step="news"><span class="step-dot"></span><span class="step-label">뉴스</span></div>
         <div class="progress-step" data-step="ai"><span class="step-dot"></span><span class="step-label">AI 분석</span></div>
       </div>
       <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
@@ -126,8 +128,17 @@
       <!-- 환율 정보 (해외 종목) -->
       <div class="exchange-rate-bar hidden" id="exchangeRateBar"></div>
 
+      <!-- 섹션 탭 바 -->
+      <div class="section-tabs" id="sectionTabs">
+        <button class="section-tab active" data-target="chartArea">차트</button>
+        <button class="section-tab" data-target="infoArea">시세</button>
+        <button class="section-tab" data-target="indicatorArea">지표</button>
+        <button class="section-tab" data-target="newsArea">뉴스</button>
+        <button class="section-tab" data-target="analysisArea">AI분석</button>
+      </div>
+
       <!-- 차트 영역 -->
-      <div class="chart-section">
+      <div class="chart-section" id="chartArea">
         <div class="chart-top-bar">
           <div class="chart-legend" id="chartLegend">
             <span class="legend-item" data-ma="5" title="클릭하여 토글">
@@ -171,34 +182,46 @@
         </div>
       </div>
 
-      <!-- 52주 범위 -->
-      <div class="range-section" id="rangeSection"></div>
-
-      <!-- 시세 정보 테이블 -->
-      <div class="info-table" id="infoTable"></div>
+      <!-- 52주 범위 + 시세 정보 -->
+      <div id="infoArea">
+        <div class="range-section" id="rangeSection"></div>
+        <div class="info-table" id="infoTable"></div>
+      </div>
 
       <!-- 기술적 지표 카드 -->
-      <div class="indicators-grid" id="indicatorsGrid"></div>
+      <div class="indicators-wrapper" id="indicatorArea">
+        <div class="indicators-grid" id="indicatorsGrid"></div>
+      </div>
 
       <!-- 뉴스 섹션 -->
-      <div class="news-section hidden" id="newsSection">
-        <h3 class="news-title">관련 뉴스</h3>
-        <div id="newsList" class="news-list"></div>
+      <div id="newsArea">
+        <div class="news-section hidden" id="newsSection">
+          <h3 class="news-title">관련 뉴스</h3>
+          <div id="newsList" class="news-list"></div>
+        </div>
       </div>
 
       <!-- AI 분석 -->
-      <div class="analysis-section hidden" id="analysisSection">
-        <div class="analysis-header">
-          <h2>AI 분석 리포트</h2>
-          <div class="analysis-actions">
-            <button class="re-analyze-btn" onclick="screenshotAnalysis()" title="리포트 캡처">📷</button>
-            <button id="exportBtn" class="re-analyze-btn" onclick="exportAnalysis()" title="PDF 내보내기">📄 내보내기</button>
-            <button id="reAnalyzeBtn" class="re-analyze-btn" onclick="reAnalyze()">재분석</button>
+      <div id="analysisArea">
+        <div class="analysis-section hidden" id="analysisSection">
+          <div class="analysis-header">
+            <h2>AI 분석 리포트</h2>
+            <div class="analysis-actions">
+              <button class="re-analyze-btn" onclick="screenshotAnalysis()" title="리포트 캡처">📷</button>
+              <button id="exportBtn" class="re-analyze-btn" onclick="exportAnalysis()" title="PDF 내보내기">📄</button>
+              <button id="reAnalyzeBtn" class="re-analyze-btn" onclick="reAnalyze()">재분석</button>
+            </div>
           </div>
+          <div id="analysisContent" class="analysis-content"></div>
         </div>
-        <div id="analysisContent" class="analysis-content"></div>
       </div>
     </div>
+
+    <!-- 푸터 -->
+    <footer class="app-footer">
+      <p>본 서비스는 투자 권유가 아닌 참고 자료입니다. 투자 판단의 책임은 본인에게 있습니다.</p>
+      <p class="footer-sub">AI 주식 분석기 &middot; Powered by Gemini AI &middot; Data from Yahoo Finance</p>
+    </footer>
   </div>
 
   <!-- 지표 설명 팝업 -->
@@ -211,6 +234,12 @@
       <div id="popupBody" class="indicator-popup-body"></div>
     </div>
   </div>
+
+  <!-- 토스트 -->
+  <div class="toast-container" id="toastContainer"></div>
+
+  <!-- 맨 위로 -->
+  <button class="scroll-top-btn hidden" id="scrollTopBtn" onclick="window.scrollTo({top:0,behavior:'smooth'})">↑</button>
 
   <script src="app.js"></script>
 </body>
