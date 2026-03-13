@@ -280,16 +280,48 @@ ${JSON.stringify(priceSummary, null, 2)}
 > 본 분석은 투자 권유가 아닌 참고 자료입니다.`;
 
     const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+
+    // 스트리밍 요청인 경우 SSE로 응답
+    if (req.query.stream === '1') {
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+      });
+
+      // 먼저 지표 전송
+      res.write(`data: ${JSON.stringify({ type: 'indicators', indicators })}\n\n`);
+
+      const streamResult = await model.generateContentStream(prompt);
+      for await (const chunk of streamResult.stream) {
+        const text = chunk.text();
+        if (text) {
+          res.write(`data: ${JSON.stringify({ type: 'chunk', text })}\n\n`);
+        }
+      }
+      res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
+      res.end();
+      return;
+    }
+
+    // 일반 요청
     const result = await Promise.race([
       model.generateContent(prompt),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('AI 분석 시간이 초과되었습니다. 다시 시도해주세요.')), 120000))
+      new Promise((_, reject) => setTimeout(() => reject(new Error('AI_TIMEOUT')), 120000))
     ]);
     const text = result.response.text();
 
     res.json({ success: true, analysis: text, indicators });
   } catch (err) {
     console.error('Analysis error:', err.message);
-    res.status(500).json({ success: false, error: 'AI 분석 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.' });
+    const code = err.message;
+    if (code === 'AI_TIMEOUT') {
+      res.status(504).json({ success: false, error: 'AI 분석 시간이 초과되었습니다 (2분). 다시 시도해주세요.', code: 'AI_TIMEOUT' });
+    } else if (code.includes('quota') || code.includes('429')) {
+      res.status(429).json({ success: false, error: 'Gemini API 할당량을 초과했습니다. 잠시 후 다시 시도해주세요.', code: 'API_QUOTA' });
+    } else {
+      res.status(500).json({ success: false, error: 'AI 분석 중 오류가 발생했습니다: ' + err.message, code: 'AI_ERROR' });
+    }
   }
 });
 

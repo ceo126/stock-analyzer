@@ -8,7 +8,110 @@ let analyzeController = null;
 let periodController = null;
 let dropdownIndex = -1;
 
+// MA선 시리즈 참조 (토글용)
+let maSeries = {};
+let maVisible = { 5: true, 20: true, 60: true, 120: true };
+
 const symbolInput = document.getElementById('symbolInput');
+
+// ==================== 다크모드 ====================
+function toggleDarkMode() {
+  const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+  const newTheme = isDark ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', newTheme === 'dark' ? 'dark' : '');
+  if (newTheme === 'dark') {
+    document.documentElement.setAttribute('data-theme', 'dark');
+  } else {
+    document.documentElement.removeAttribute('data-theme');
+  }
+  localStorage.setItem('theme', newTheme);
+  document.getElementById('darkModeBtn').textContent = newTheme === 'dark' ? '☀️' : '🌙';
+
+  // 차트 재렌더링 (배경색 반영)
+  if (currentChartData.length > 0) renderChart(currentChartData);
+}
+
+// 초기 테마 적용
+(function initTheme() {
+  const saved = localStorage.getItem('theme');
+  if (saved === 'dark') {
+    document.documentElement.setAttribute('data-theme', 'dark');
+    document.getElementById('darkModeBtn').textContent = '☀️';
+  }
+})();
+
+// ==================== 워치리스트 ====================
+function getWatchlist() {
+  try { return JSON.parse(localStorage.getItem('watchlist') || '[]'); }
+  catch { return []; }
+}
+
+function saveWatchlist(list) {
+  localStorage.setItem('watchlist', JSON.stringify(list));
+}
+
+function isInWatchlist(symbol) {
+  return getWatchlist().some(w => w.symbol === symbol);
+}
+
+function toggleWatchlistItem(symbol, name) {
+  let list = getWatchlist();
+  if (list.some(w => w.symbol === symbol)) {
+    list = list.filter(w => w.symbol !== symbol);
+  } else {
+    list.unshift({ symbol, name });
+    if (list.length > 20) list = list.slice(0, 20);
+  }
+  saveWatchlist(list);
+  renderWatchlist();
+  updateFavButton();
+}
+
+function toggleWatchlist() {
+  const panel = document.getElementById('watchlistPanel');
+  const btn = document.getElementById('watchlistToggle');
+  panel.classList.toggle('hidden');
+  btn.classList.toggle('active', !panel.classList.contains('hidden'));
+  if (!panel.classList.contains('hidden')) renderWatchlist();
+}
+
+function renderWatchlist() {
+  const container = document.getElementById('watchlistItems');
+  const list = getWatchlist();
+  if (list.length === 0) {
+    container.innerHTML = '<p class="watchlist-empty">즐겨찾기한 종목이 없습니다</p>';
+    return;
+  }
+  container.innerHTML = list.map(w => `
+    <div class="watchlist-chip" onclick="setSymbol('${escapeHtml(w.symbol)}')">
+      <span>${escapeHtml(w.name || w.symbol)}</span>
+      <span class="remove" onclick="event.stopPropagation(); toggleWatchlistItem('${escapeHtml(w.symbol)}', '${escapeHtml(w.name || w.symbol)}')">&times;</span>
+    </div>
+  `).join('');
+}
+
+function updateFavButton() {
+  const btn = document.querySelector('.stock-fav-btn');
+  if (!btn || !currentSymbol) return;
+  const isFav = isInWatchlist(currentSymbol);
+  btn.textContent = isFav ? '★' : '☆';
+  btn.classList.toggle('active', isFav);
+}
+
+// ==================== 키보드 단축키 ====================
+document.addEventListener('keydown', (e) => {
+  // 입력 필드에 포커스 중이면 전역 단축키 무시
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+  if (e.key === '/' || e.key === 'ㅊ') {
+    e.preventDefault();
+    symbolInput.focus();
+  } else if (e.key === 'd' || e.key === 'D' || e.key === 'ㅇ') {
+    toggleDarkMode();
+  } else if (e.key === 'w' || e.key === 'W' || e.key === 'ㅈ') {
+    toggleWatchlist();
+  }
+});
 
 // 엔터 키 + 키보드 네비게이션
 symbolInput.addEventListener('keydown', (e) => {
@@ -31,6 +134,7 @@ symbolInput.addEventListener('keydown', (e) => {
     analyzeStock();
   } else if (e.key === 'Escape') {
     hideDropdown();
+    symbolInput.blur();
   }
 });
 
@@ -151,6 +255,21 @@ document.addEventListener('click', (e) => {
   if (!e.target.closest('.search-box')) hideDropdown();
 });
 
+// ==================== MA선 토글 ====================
+document.querySelectorAll('.legend-item').forEach(item => {
+  item.addEventListener('click', () => {
+    const ma = parseInt(item.dataset.ma);
+    maVisible[ma] = !maVisible[ma];
+    item.classList.toggle('disabled', !maVisible[ma]);
+
+    if (maSeries[ma]) {
+      maSeries[ma].applyOptions({
+        visible: maVisible[ma],
+      });
+    }
+  });
+});
+
 // 기간 버튼 이벤트
 document.querySelectorAll('.period-btn').forEach(btn => {
   btn.addEventListener('click', () => {
@@ -170,7 +289,7 @@ document.querySelectorAll('.period-btn').forEach(btn => {
           showChartLoading(false);
           setText('loadingText', 'AI가 종목을 분석하고 있습니다...');
           show('loading');
-          return fetchAnalysis(pSignal);
+          return fetchAnalysisStream(pSignal);
         })
         .then(() => {
           if (!pSignal.aborted) hide('loading');
@@ -210,7 +329,7 @@ async function analyzeStock() {
   setText('loadingText', '주가 데이터를 불러오는 중...');
 
   try {
-    const period = document.querySelector('.period-btn.active')?.dataset.period || '6mo';
+    const period = document.querySelector('.period-btn.active')?.dataset.period || '1y';
     await fetchStockData(input, period);
 
     if (signal.aborted) return;
@@ -220,7 +339,7 @@ async function analyzeStock() {
     }
 
     setText('loadingText', 'AI가 종목을 분석하고 있습니다...');
-    await fetchAnalysis(signal);
+    await fetchAnalysisStream(signal);
 
     show('result');
   } catch (err) {
@@ -232,7 +351,7 @@ async function analyzeStock() {
   }
 }
 
-async function fetchStockData(symbol, period = '6mo') {
+async function fetchStockData(symbol, period = '1y') {
   const res = await fetch(`/api/stock/${encodeURIComponent(symbol)}?period=${period}`);
   const data = await res.json();
 
@@ -247,6 +366,87 @@ async function fetchStockData(symbol, period = '6mo') {
   show('result');
 }
 
+// ==================== SSE 스트리밍 분석 ====================
+async function fetchAnalysisStream(signal) {
+  const body = JSON.stringify({
+    symbol: currentSymbol,
+    quote: currentQuote,
+    chartData: currentChartData
+  });
+
+  const res = await fetch('/api/analyze?stream=1', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body,
+    signal,
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || '분석에 실패했습니다');
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let fullText = '';
+  let indicatorsReceived = false;
+
+  // 분석 섹션 보이기
+  const section = document.getElementById('analysisSection');
+  const content = document.getElementById('analysisContent');
+  section.classList.remove('hidden');
+  section.classList.add('fade-in');
+
+  const now = new Date();
+  const timeStr = `${now.getFullYear()}.${String(now.getMonth()+1).padStart(2,'0')}.${String(now.getDate()).padStart(2,'0')} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+  content.innerHTML = `<div class="analysis-time">분석 시점: ${timeStr}</div><span class="streaming-cursor"></span>`;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue;
+      const jsonStr = line.slice(6);
+      try {
+        const msg = JSON.parse(jsonStr);
+
+        if (msg.type === 'indicators' && !indicatorsReceived) {
+          indicatorsReceived = true;
+          renderIndicators(msg.indicators);
+        } else if (msg.type === 'chunk') {
+          fullText += msg.text;
+          const parsed = marked.parse(fullText, { breaks: true });
+          const sanitized = DOMPurify.sanitize(parsed, {
+            ALLOWED_TAGS: ['h1','h2','h3','h4','h5','h6','p','br','hr','ul','ol','li','strong','em','a','code','pre','blockquote','table','thead','tbody','tr','th','td','div','span'],
+            ALLOWED_ATTR: ['href','class'],
+            FORBID_ATTR: ['style','onerror','onload'],
+          });
+          content.innerHTML = `<div class="analysis-time">분석 시점: ${timeStr}</div>` + sanitized + '<span class="streaming-cursor"></span>';
+        } else if (msg.type === 'done') {
+          // 최종 렌더링 (커서 제거)
+          const parsed = marked.parse(fullText, { breaks: true });
+          const sanitized = DOMPurify.sanitize(parsed, {
+            ALLOWED_TAGS: ['h1','h2','h3','h4','h5','h6','p','br','hr','ul','ol','li','strong','em','a','code','pre','blockquote','table','thead','tbody','tr','th','td','div','span'],
+            ALLOWED_ATTR: ['href','class'],
+            FORBID_ATTR: ['style','onerror','onload'],
+          });
+          content.innerHTML = `<div class="analysis-time">분석 시점: ${timeStr}</div>` + sanitized;
+
+          // 자동 스크롤
+          section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      } catch {}
+    }
+  }
+}
+
+// 일반 분석 (폴백)
 async function fetchAnalysis(signal) {
   const fetchOptions = {
     method: 'POST',
@@ -273,13 +473,18 @@ async function reAnalyze() {
   btn.disabled = true;
   btn.textContent = '분석 중...';
   try {
-    await fetchAnalysis();
+    await fetchAnalysisStream();
   } catch (err) {
     showError(err.message);
   } finally {
     btn.disabled = false;
     btn.textContent = '재분석';
   }
+}
+
+// ==================== PDF 내보내기 ====================
+function exportAnalysis() {
+  window.print();
 }
 
 // ==================== 네이버 스타일 렌더링 ====================
@@ -293,9 +498,14 @@ function renderSummary(quote, symbol) {
   const range52 = (quote.fiftyTwoWeekHigh || 0) - (quote.fiftyTwoWeekLow || 0);
   const pos52 = range52 > 0 ? ((quote.price - quote.fiftyTwoWeekLow) / range52) * 100 : 50;
 
+  const isFav = isInWatchlist(symbol);
+
   // 종목 헤더
   document.getElementById('stockSummary').innerHTML = `
-    <div class="stock-title">${escapeHtml(quote.name)}</div>
+    <div class="stock-title-row">
+      <div class="stock-title">${escapeHtml(quote.name)}</div>
+      <button class="stock-fav-btn ${isFav ? 'active' : ''}" onclick="toggleWatchlistItem('${escapeHtml(symbol)}', '${escapeHtml(quote.name)}')">${isFav ? '★' : '☆'}</button>
+    </div>
     <div class="stock-code">${escapeHtml(quote.exchange)} ${escapeHtml(symbol)}</div>
     <div class="stock-price-main ${cls}">${formatNumber(quote.price)}</div>
     <div class="stock-change-info ${cls}">
@@ -361,11 +571,23 @@ function cleanupCharts() {
     volumeChart.remove();
     volumeChart = null;
   }
+  maSeries = {};
+}
+
+function getChartColors() {
+  const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+  return {
+    bg: isDark ? '#16213e' : '#ffffff',
+    text: isDark ? '#777' : '#999',
+    grid: isDark ? '#222244' : '#f0f0f0',
+    border: isDark ? '#2a2a4a' : '#e0e0e0',
+  };
 }
 
 function renderChart(chartData) {
   cleanupCharts();
 
+  const colors = getChartColors();
   const priceContainer = document.getElementById('priceChart');
   const volumeContainer = document.getElementById('volumeChart');
 
@@ -374,20 +596,20 @@ function renderChart(chartData) {
     height: 360,
     layout: {
       background: { color: 'transparent' },
-      textColor: '#999',
+      textColor: colors.text,
       fontSize: 11,
     },
     grid: {
-      vertLines: { color: '#f0f0f0' },
-      horzLines: { color: '#f0f0f0' },
+      vertLines: { color: colors.grid },
+      horzLines: { color: colors.grid },
     },
     crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
     rightPriceScale: {
-      borderColor: '#e0e0e0',
+      borderColor: colors.border,
       scaleMargins: { top: 0.05, bottom: 0.05 },
     },
     timeScale: {
-      borderColor: '#e0e0e0',
+      borderColor: colors.border,
       timeVisible: false,
       rightOffset: 2,
       barSpacing: 6,
@@ -428,8 +650,10 @@ function renderChart(chartData) {
         crosshairMarkerVisible: false,
         lastValueVisible: false,
         priceLineVisible: false,
+        visible: maVisible[period],
       });
       series.setData(calcMAArray(chartData, period));
+      maSeries[period] = series;
     }
   });
 
@@ -441,14 +665,14 @@ function renderChart(chartData) {
     height: 80,
     layout: {
       background: { color: 'transparent' },
-      textColor: '#999',
+      textColor: colors.text,
       fontSize: 10,
     },
     grid: {
       vertLines: { visible: false },
-      horzLines: { color: '#f0f0f0' },
+      horzLines: { color: colors.grid },
     },
-    rightPriceScale: { borderColor: '#e0e0e0' },
+    rightPriceScale: { borderColor: colors.border },
     timeScale: { visible: false },
   });
 
@@ -571,9 +795,14 @@ function renderAnalysis(markdown) {
   const now = new Date();
   const timeStr = `${now.getFullYear()}.${String(now.getMonth()+1).padStart(2,'0')}.${String(now.getDate()).padStart(2,'0')} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
 
+  const section = document.getElementById('analysisSection');
   document.getElementById('analysisContent').innerHTML =
     `<div class="analysis-time">분석 시점: ${timeStr}</div>` + sanitized;
-  document.getElementById('analysisSection').classList.remove('hidden');
+  section.classList.remove('hidden');
+  section.classList.add('fade-in');
+
+  // 자동 스크롤
+  section.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 // --- 유틸리티 ---
@@ -591,33 +820,6 @@ function calcMAArray(data, period) {
     if (i >= period) sum -= data[i - period].close;
     if (i >= period - 1) {
       result.push({ time: toChartTime(data[i].date), value: sum / period });
-    }
-  }
-  return result;
-}
-
-function calcBBArray(data, period) {
-  if (data.length < period) return [];
-  const result = [];
-  let sum = 0, sumSq = 0;
-  for (let i = 0; i < data.length; i++) {
-    const c = data[i].close;
-    sum += c;
-    sumSq += c * c;
-    if (i >= period) {
-      const old = data[i - period].close;
-      sum -= old;
-      sumSq -= old * old;
-    }
-    if (i >= period - 1) {
-      const mean = sum / period;
-      const variance = sumSq / period - mean * mean;
-      const std = Math.sqrt(Math.max(0, variance));
-      result.push({
-        time: toChartTime(data[i].date),
-        upper: mean + 2 * std,
-        lower: mean - 2 * std
-      });
     }
   }
   return result;
@@ -641,13 +843,6 @@ function formatMarketCap(cap, currency) {
   return cap.toLocaleString();
 }
 
-function formatVolume(vol) {
-  if (!vol) return '-';
-  if (vol >= 1e6) return (vol / 1e6).toFixed(1) + 'M';
-  if (vol >= 1e3) return (vol / 1e3).toFixed(0) + 'K';
-  return vol.toLocaleString();
-}
-
 function show(id) { document.getElementById(id).classList.remove('hidden'); }
 function hide(id) { document.getElementById(id).classList.add('hidden'); }
 function setText(id, text) { document.getElementById(id).textContent = text; }
@@ -661,6 +856,12 @@ function showChartLoading(on) {
 
 function showError(msg) {
   const el = document.getElementById('error');
-  el.textContent = msg;
+  // 구체적 에러 메시지
+  const messages = {
+    'AI_TIMEOUT': 'AI 분석 시간이 초과되었습니다. 잠시 후 다시 시도해주세요.',
+    'API_QUOTA': 'API 할당량을 초과했습니다. 잠시 후 다시 시도해주세요.',
+    'Failed to fetch': '서버에 연결할 수 없습니다. 네트워크를 확인해주세요.',
+  };
+  el.textContent = messages[msg] || msg;
   el.classList.remove('hidden');
 }
