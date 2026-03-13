@@ -36,6 +36,31 @@ process.on('unhandledRejection', (err) => {
   console.error('Unhandled Rejection:', err.message);
 });
 
+// ========================
+//   Yahoo Finance 캐시 (5분 TTL)
+// ========================
+const yahooCache = new Map();
+const CACHE_TTL = 5 * 60 * 1000;
+
+function getCached(key) {
+  const entry = yahooCache.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.ts > CACHE_TTL) {
+    yahooCache.delete(key);
+    return null;
+  }
+  return entry.data;
+}
+
+function setCache(key, data) {
+  yahooCache.set(key, { data, ts: Date.now() });
+  // 캐시 크기 제한 (100개)
+  if (yahooCache.size > 100) {
+    const oldest = yahooCache.keys().next().value;
+    yahooCache.delete(oldest);
+  }
+}
+
 // 한국 종목 이름 매핑
 const KR_STOCK_NAMES = {
   '005930': '삼성전자', '005935': '삼성전자우', '000660': 'SK하이닉스',
@@ -59,10 +84,6 @@ const KR_STOCK_NAMES = {
 
 const KOSDAQ_CODES = new Set(['042700', '196170', '086520']);
 
-function isDomesticCode(symbol) {
-  return /^\d{6}$/.test(symbol) || /^\d{6}\.(KS|KQ)$/.test(symbol);
-}
-
 // 국내 종목코드 → Yahoo 심볼 변환
 function toYahooSymbol(symbol) {
   if (/^\d{6}\.(KS|KQ)$/.test(symbol)) return symbol;
@@ -74,8 +95,12 @@ function toYahooSymbol(symbol) {
 
 const YAHOO_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36';
 
-// Yahoo Finance 차트 API (OHLCV + 시세 한번에)
+// Yahoo Finance 차트 API (OHLCV + 시세 한번에) + 캐싱
 async function fetchYahooChart(symbol, range) {
+  const cacheKey = `${symbol}:${range}`;
+  const cached = getCached(cacheKey);
+  if (cached) return cached;
+
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=${range}&interval=1d&includePrePost=false`;
 
   const res = await fetch(url, {
@@ -135,7 +160,9 @@ async function fetchYahooChart(symbol, range) {
     });
   }
 
-  return { quote, chartData };
+  const result2 = { quote, chartData };
+  setCache(cacheKey, result2);
+  return result2;
 }
 
 // 한국 종목 목록 API
@@ -172,6 +199,36 @@ app.get('/api/search', async (req, res) => {
 });
 
 // ========================
+//   워치리스트 실시간 시세 API
+// ========================
+app.post('/api/watchlist-prices', async (req, res) => {
+  try {
+    const { symbols } = req.body;
+    if (!Array.isArray(symbols) || symbols.length === 0 || symbols.length > 20) {
+      return res.json({ prices: {} });
+    }
+
+    const prices = {};
+    await Promise.allSettled(symbols.map(async (sym) => {
+      try {
+        const yahooSym = toYahooSymbol(sym);
+        const { quote } = await fetchYahooChart(yahooSym, '5d');
+        prices[sym] = {
+          price: quote.price,
+          change: quote.change,
+          changePercent: quote.changePercent,
+          currency: quote.currency,
+        };
+      } catch {}
+    }));
+
+    res.json({ prices });
+  } catch {
+    res.json({ prices: {} });
+  }
+});
+
+// ========================
 //   주식 데이터 조회 API (Yahoo Finance)
 // ========================
 app.get('/api/stock/:symbol', async (req, res) => {
@@ -198,7 +255,7 @@ app.get('/api/stock/:symbol', async (req, res) => {
 });
 
 // ========================
-//   AI 분석 API
+//   AI 분석 API (스트리밍 + 일반)
 // ========================
 app.post('/api/analyze', async (req, res) => {
   try {
@@ -222,6 +279,9 @@ app.post('/api/analyze', async (req, res) => {
     const volRatio = avgVol20 > 0 ? currentVol / avgVol20 : 1;
     const latestClose = closes[closes.length - 1];
 
+    // 지지선/저항선 계산
+    const srLevels = calcSupportResistance(chartData);
+
     const indicators = {
       MA5: r2(ma5), MA20: r2(ma20), MA60: r2(ma60), MA120: r2(ma120),
       RSI: r2(rsi),
@@ -229,7 +289,9 @@ app.post('/api/analyze', async (req, res) => {
       BB_Upper: r2(bb.upper), BB_Middle: r2(bb.middle), BB_Lower: r2(bb.lower),
       BB_Width: bb.middle !== 0 ? r2(((bb.upper - bb.lower) / bb.middle) * 100) : 0,
       Stochastic_K: r2(stoch.k), Stochastic_D: r2(stoch.d),
-      현재가: r2(latestClose), 거래량비율: r2(volRatio)
+      현재가: r2(latestClose), 거래량비율: r2(volRatio),
+      지지선: srLevels.support.map(r2),
+      저항선: srLevels.resistance.map(r2),
     };
 
     const priceSummary = chartData.slice(-30).map(d => ({
@@ -289,17 +351,34 @@ ${JSON.stringify(priceSummary, null, 2)}
         'Connection': 'keep-alive',
       });
 
+      // 클라이언트 연결 끊김 감지
+      let clientDisconnected = false;
+      req.on('close', () => { clientDisconnected = true; });
+
       // 먼저 지표 전송
       res.write(`data: ${JSON.stringify({ type: 'indicators', indicators })}\n\n`);
 
-      const streamResult = await model.generateContentStream(prompt);
-      for await (const chunk of streamResult.stream) {
-        const text = chunk.text();
-        if (text) {
-          res.write(`data: ${JSON.stringify({ type: 'chunk', text })}\n\n`);
+      try {
+        const streamResult = await model.generateContentStream(prompt);
+        for await (const chunk of streamResult.stream) {
+          if (clientDisconnected) break;
+          const text = chunk.text();
+          if (text) {
+            res.write(`data: ${JSON.stringify({ type: 'chunk', text })}\n\n`);
+          }
+        }
+        if (!clientDisconnected) {
+          res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
+        }
+      } catch (streamErr) {
+        console.error('SSE stream error:', streamErr.message);
+        if (!clientDisconnected) {
+          const errMsg = streamErr.message.includes('quota') || streamErr.message.includes('429')
+            ? 'Gemini API 할당량을 초과했습니다.'
+            : 'AI 분석 중 오류가 발생했습니다.';
+          res.write(`data: ${JSON.stringify({ type: 'error', error: errMsg })}\n\n`);
         }
       }
-      res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
       res.end();
       return;
     }
@@ -394,6 +473,32 @@ function calcStochastic(chartData, period = 14) {
     kValues.push(h === l ? 50 : ((sl[sl.length - 1].close - l) / (h - l)) * 100);
   }
   return { k, d: kValues.reduce((a, b) => a + b, 0) / kValues.length };
+}
+
+// 지지선/저항선 계산 (피봇 포인트 + 가격 클러스터링)
+function calcSupportResistance(chartData) {
+  if (chartData.length < 20) return { support: [], resistance: [] };
+
+  const closes = chartData.map(d => d.close);
+  const currentPrice = closes[closes.length - 1];
+
+  // 최근 데이터의 피봇 포인트
+  const recent = chartData.slice(-20);
+  const high = Math.max(...recent.map(d => d.high));
+  const low = Math.min(...recent.map(d => d.low));
+  const close = recent[recent.length - 1].close;
+  const pivot = (high + low + close) / 3;
+
+  const s1 = 2 * pivot - high;
+  const s2 = pivot - (high - low);
+  const r1 = 2 * pivot - low;
+  const r2val = pivot + (high - low);
+
+  // 현재가 기준 분류
+  const support = [s1, s2].filter(v => v < currentPrice && v > 0).sort((a, b) => b - a);
+  const resistance = [r1, r2val].filter(v => v > currentPrice).sort((a, b) => a - b);
+
+  return { support: support.slice(0, 2), resistance: resistance.slice(0, 2) };
 }
 
 const server = app.listen(PORT, () => {

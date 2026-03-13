@@ -191,6 +191,15 @@ body {
   color: var(--up);
 }
 
+.watchlist-chip .wl-price {
+  font-weight: 700;
+  font-size: 0.78rem;
+  margin-left: 2px;
+}
+
+.watchlist-chip .wl-price.up { color: var(--up); }
+.watchlist-chip .wl-price.down { color: var(--down); }
+
 /* 검색 */
 .search-section {
   margin: 0 0 24px;
@@ -508,6 +517,19 @@ body {
 .volume-chart {
   width: 100%;
   height: 80px;
+}
+
+.macd-chart {
+  width: 100%;
+  height: 100px;
+  border-top: 1px solid var(--border-light);
+  margin-top: 4px;
+}
+
+.legend-sep {
+  color: var(--border);
+  margin: 0 4px;
+  font-size: 0.7rem;
 }
 
 .period-selector {
