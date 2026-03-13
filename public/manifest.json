@@ -1,0 +1,16 @@
+{
+  "name": "AI 주식 분석기",
+  "short_name": "주식분석",
+  "description": "AI 기반 실시간 주식 분석 및 기술적 지표 리포트",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f5f6f8",
+  "theme_color": "#4f6ef7",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

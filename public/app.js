@@ -4,10 +4,12 @@ let currentQuote = null;
 let priceChart = null;
 let volumeChart = null;
 let macdChart = null;
+let compareChart = null;
 let resizeObserverRef = null;
 let analyzeController = null;
 let periodController = null;
 let dropdownIndex = -1;
+let compareSymbols = [];
 
 // MA선 시리즈 참조 (토글용)
 let maSeries = {};
@@ -47,6 +49,11 @@ function toggleDarkMode() {
     document.getElementById('darkModeBtn').textContent = '☀️';
   }
 })();
+
+// ==================== PWA Service Worker ====================
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').catch(() => {});
+}
 
 // ==================== 워치리스트 ====================
 function getWatchlist() {
@@ -129,6 +136,136 @@ function updateFavButton() {
   const isFav = isInWatchlist(currentSymbol);
   btn.textContent = isFav ? '★' : '☆';
   btn.classList.toggle('active', isFav);
+}
+
+// ==================== 분석 이력 ====================
+function getAnalysisHistory() {
+  try { return JSON.parse(localStorage.getItem('analysisHistory') || '[]'); } catch { return []; }
+}
+
+function saveAnalysisToHistory(symbol, name, score, summary) {
+  const history = getAnalysisHistory().filter(h => h.symbol !== symbol);
+  history.unshift({
+    symbol, name, score,
+    summary: (summary || '').substring(0, 200),
+    date: new Date().toISOString(),
+  });
+  localStorage.setItem('analysisHistory', JSON.stringify(history.slice(0, 30)));
+}
+
+function toggleHistoryPanel() {
+  const panel = document.getElementById('historyPanel');
+  const btn = document.getElementById('historyToggle');
+  panel.classList.toggle('hidden');
+  btn.classList.toggle('active', !panel.classList.contains('hidden'));
+  if (!panel.classList.contains('hidden')) renderHistory();
+}
+
+function renderHistory() {
+  const container = document.getElementById('historyItems');
+  const history = getAnalysisHistory();
+  if (history.length === 0) {
+    container.innerHTML = '<p class="watchlist-empty">분석 이력이 없습니다</p>';
+    return;
+  }
+  container.innerHTML = history.map(h => {
+    const d = new Date(h.date);
+    const dateStr = `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+    const scoreColor = h.score >= 60 ? 'var(--up)' : h.score <= 40 ? 'var(--down)' : 'var(--text-muted)';
+    return `<div class="history-item" onclick="setSymbol('${escapeHtml(h.symbol)}')">
+      <div class="history-item-info">
+        <span class="history-item-name">${escapeHtml(h.name || h.symbol)}</span>
+        <span class="history-item-date">${dateStr}</span>
+      </div>
+      <span class="history-item-score" style="color:${scoreColor}">${h.score != null ? h.score + '점' : '-'}</span>
+    </div>`;
+  }).join('');
+}
+
+function clearHistory() {
+  localStorage.removeItem('analysisHistory');
+  renderHistory();
+}
+
+// ==================== 비교 모드 ====================
+function toggleCompareMode() {
+  const on = document.getElementById('compareMode').checked;
+  const inputs = document.getElementById('compareInputs');
+  inputs.classList.toggle('hidden', !on);
+  if (!on) {
+    compareSymbols = [];
+    renderCompareChips();
+    const el = document.getElementById('compareChart');
+    if (el) el.classList.add('hidden');
+  }
+}
+
+function addCompareSymbol() {
+  const input = document.getElementById('compareSymbol');
+  const sym = input.value.trim();
+  if (!sym || compareSymbols.length >= 2) return;
+  if (!compareSymbols.includes(sym)) compareSymbols.push(sym);
+  input.value = '';
+  renderCompareChips();
+}
+
+function removeCompareSymbol(sym) {
+  compareSymbols = compareSymbols.filter(s => s !== sym);
+  renderCompareChips();
+}
+
+function renderCompareChips() {
+  const container = document.getElementById('compareChips');
+  container.innerHTML = compareSymbols.map(s =>
+    `<span class="compare-chip">${escapeHtml(s)} <span class="remove" onclick="removeCompareSymbol('${escapeHtml(s)}')">&times;</span></span>`
+  ).join('');
+}
+
+async function fetchCompareData() {
+  if (compareSymbols.length === 0 || !currentSymbol) return;
+  const all = [currentSymbol, ...compareSymbols];
+  const period = document.querySelector('.period-btn.active')?.dataset.period || '1y';
+  try {
+    const res = await fetch(`/api/compare?symbols=${all.map(s => encodeURIComponent(s)).join(',')}&period=${period}`);
+    const data = await res.json();
+    if (data.success) renderCompareChart(data.results);
+  } catch {}
+}
+
+function renderCompareChart(results) {
+  const container = document.getElementById('compareChart');
+  container.classList.remove('hidden');
+  if (compareChart) { compareChart.remove(); compareChart = null; }
+
+  const colors = getChartColors();
+  const lineColors = ['#4f6ef7', '#e22926', '#26a69a'];
+
+  compareChart = LightweightCharts.createChart(container, {
+    width: container.clientWidth, height: 200,
+    layout: { background: { color: 'transparent' }, textColor: colors.text, fontSize: 10 },
+    grid: { vertLines: { visible: false }, horzLines: { color: colors.grid } },
+    rightPriceScale: { borderColor: colors.border },
+    timeScale: { visible: false },
+  });
+
+  results.forEach((r, i) => {
+    const series = compareChart.addLineSeries({
+      color: lineColors[i % lineColors.length], lineWidth: 2,
+      crosshairMarkerVisible: true, lastValueVisible: true, priceLineVisible: false,
+      title: r.name || r.symbol,
+    });
+    series.setData(r.normalized.map(d => ({ time: toChartTime(d.date), value: d.return })));
+  });
+
+  compareChart.timeScale().fitContent();
+
+  // 동기화
+  if (priceChart) {
+    priceChart.timeScale().subscribeVisibleLogicalRangeChange(range => {
+      if (!range || !compareChart) return;
+      compareChart.timeScale().setVisibleLogicalRange(range);
+    });
+  }
 }
 
 // ==================== 키보드 단축키 ====================
@@ -297,6 +434,10 @@ document.querySelectorAll('.period-btn').forEach(btn => {
         .then(() => {
           if (pSignal.aborted) return;
           showChartLoading(false);
+          // 비교 모드 차트도 갱신
+          if (document.getElementById('compareMode').checked && compareSymbols.length > 0) {
+            fetchCompareData();
+          }
         })
         .catch(err => {
           if (err.name === 'AbortError') return;
@@ -312,6 +453,27 @@ function setSymbol(sym) {
   analyzeStock();
 }
 
+// ==================== 프로그레스 바 ====================
+function showProgress(step) {
+  const bar = document.getElementById('progressBar');
+  bar.classList.remove('hidden');
+  const steps = ['data', 'indicator', 'news', 'ai'];
+  const idx = steps.indexOf(step);
+  const fill = document.getElementById('progressFill');
+  fill.style.width = ((idx + 1) / steps.length * 100) + '%';
+
+  document.querySelectorAll('.progress-step').forEach(el => {
+    const s = el.dataset.step;
+    const si = steps.indexOf(s);
+    el.classList.toggle('active', s === step);
+    el.classList.toggle('done', si < idx);
+  });
+}
+
+function hideProgress() {
+  document.getElementById('progressBar').classList.add('hidden');
+}
+
 // ==================== 메인 분석 흐름 ====================
 async function analyzeStock() {
   const input = document.getElementById('symbolInput').value.trim();
@@ -324,13 +486,12 @@ async function analyzeStock() {
   const btn = document.getElementById('searchBtn');
   btn.disabled = true;
 
-  show('loading');
   hide('error');
   hide('result');
   document.getElementById('analysisSection').classList.add('hidden');
   document.getElementById('analysisContent').innerHTML = '';
   document.getElementById('indicatorsGrid').innerHTML = '';
-  setText('loadingText', '주가 데이터를 불러오는 중...');
+  showProgress('data');
 
   try {
     const period = document.querySelector('.period-btn.active')?.dataset.period || '1y';
@@ -339,16 +500,31 @@ async function analyzeStock() {
 
     if (currentQuote) addSearchHistory(currentSymbol, currentQuote.name, currentQuote.exchange);
 
-    setText('loadingText', 'AI가 종목을 분석하고 있습니다...');
+    // 비교 모드
+    if (document.getElementById('compareMode').checked && compareSymbols.length > 0) {
+      fetchCompareData();
+    }
+
+    // 뉴스 가져오기
+    showProgress('news');
+    fetchNews(currentSymbol);
+
+    showProgress('ai');
     await fetchAnalysisStream(signal);
     show('result');
+    hideProgress();
   } catch (err) {
     if (err.name === 'AbortError') return;
     showError(err.message);
+    hideProgress();
   } finally {
-    hide('loading');
     btn.disabled = false;
   }
+}
+
+function retryAnalysis() {
+  hide('error');
+  analyzeStock();
 }
 
 async function fetchStockData(symbol, period = '1y') {
@@ -363,6 +539,41 @@ async function fetchStockData(symbol, period = '1y') {
   renderSummary(data.quote, data.symbol);
   renderChart(data.chartData);
   show('result');
+
+  // 환율 표시 (해외 종목)
+  const rateBar = document.getElementById('exchangeRateBar');
+  if (data.exchangeRate && data.quote.currency !== 'KRW') {
+    rateBar.innerHTML = `USD/KRW 환율: <strong>${formatNumber(data.exchangeRate)}</strong>원 | 원화 환산가: <strong>${formatNumber(data.quote.price * data.exchangeRate)}</strong>원`;
+    rateBar.classList.remove('hidden');
+  } else {
+    rateBar.classList.add('hidden');
+  }
+}
+
+// ==================== 뉴스 ====================
+async function fetchNews(symbol) {
+  try {
+    const res = await fetch(`/api/news/${encodeURIComponent(symbol)}`);
+    const data = await res.json();
+    const section = document.getElementById('newsSection');
+    const list = document.getElementById('newsList');
+    if (data.news && data.news.length > 0) {
+      list.innerHTML = data.news.map(n => `
+        <div class="news-item">
+          <div class="news-item-title">${escapeHtml(n.title)}</div>
+          <div class="news-item-meta">
+            <div class="news-item-publisher">${escapeHtml(n.publisher)}</div>
+            <div>${escapeHtml(n.date)}</div>
+          </div>
+        </div>
+      `).join('');
+      section.classList.remove('hidden');
+    } else {
+      section.classList.add('hidden');
+    }
+  } catch {
+    document.getElementById('newsSection').classList.add('hidden');
+  }
 }
 
 // ==================== SSE 스트리밍 분석 ====================
@@ -412,6 +623,8 @@ async function fetchAnalysisStream(signal) {
           indicatorsReceived = true;
           currentIndicators = msg.indicators;
           renderIndicators(msg.indicators);
+          renderSignalScore(msg.indicators.종합스코어);
+          showProgress('ai');
           // 지지/저항선 데이터로 차트 업데이트
           if (msg.indicators.지지선 || msg.indicators.저항선) {
             renderSRLines(msg.indicators);
@@ -424,6 +637,10 @@ async function fetchAnalysisStream(signal) {
           const sanitized = DOMPurify.sanitize(marked.parse(fullText, { breaks: true }), SANITIZE_CONFIG);
           content.innerHTML = `<div class="analysis-time">분석 시점: ${timeStr}</div>` + sanitized;
           section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          // 이력 저장
+          if (currentQuote && currentIndicators) {
+            saveAnalysisToHistory(currentSymbol, currentQuote.name, currentIndicators.종합스코어, fullText);
+          }
         } else if (msg.type === 'error') {
           content.innerHTML = `<div class="analysis-time">분석 시점: ${timeStr}</div><p style="color:var(--up);">${escapeHtml(msg.error)}</p>`;
         }
@@ -447,6 +664,65 @@ async function reAnalyze() {
 }
 
 function exportAnalysis() { window.print(); }
+
+// ==================== 종합 스코어 게이지 ====================
+function renderSignalScore(score) {
+  const section = document.getElementById('signalScoreSection');
+  const valueEl = document.getElementById('signalScoreValue');
+  const descEl = document.getElementById('signalScoreDesc');
+  const arc = document.getElementById('scoreArc');
+
+  if (score == null) return;
+  section.classList.remove('hidden');
+
+  // 게이지 아크: 반원의 둘레 ≈ 157px (50*π)
+  const arcLen = (score / 100) * 157;
+  arc.setAttribute('stroke-dasharray', `${arcLen} 157`);
+
+  // 색상
+  let color;
+  if (score >= 70) color = 'var(--up)';
+  else if (score >= 40) color = 'var(--accent)';
+  else color = 'var(--down)';
+  arc.setAttribute('stroke', color);
+  valueEl.style.color = color;
+  valueEl.textContent = score;
+
+  // 설명
+  let desc;
+  if (score >= 80) desc = '강력 매수 신호';
+  else if (score >= 60) desc = '매수 우위';
+  else if (score >= 40) desc = '중립';
+  else if (score >= 20) desc = '매도 우위';
+  else desc = '강력 매도 신호';
+  descEl.textContent = desc;
+}
+
+// ==================== 스크린샷 ====================
+async function screenshotChart() {
+  const el = document.querySelector('.chart-section');
+  if (!el || typeof html2canvas === 'undefined') return;
+  try {
+    const canvas = await html2canvas(el, { backgroundColor: null, useCORS: true });
+    downloadCanvas(canvas, `chart_${currentSymbol}_${Date.now()}.png`);
+  } catch {}
+}
+
+async function screenshotAnalysis() {
+  const el = document.getElementById('analysisSection');
+  if (!el || typeof html2canvas === 'undefined') return;
+  try {
+    const canvas = await html2canvas(el, { backgroundColor: null, useCORS: true });
+    downloadCanvas(canvas, `analysis_${currentSymbol}_${Date.now()}.png`);
+  } catch {}
+}
+
+function downloadCanvas(canvas, filename) {
+  const link = document.createElement('a');
+  link.download = filename;
+  link.href = canvas.toDataURL('image/png');
+  link.click();
+}
 
 // ==================== 렌더링 ====================
 
@@ -540,6 +816,33 @@ function renderChart(chartData) {
     time: toChartTime(d.date), open: d.open, high: d.high, low: d.low, close: d.close,
   })));
 
+  // 크로스헤어 OHLCV 툴팁
+  const tooltip = document.getElementById('crosshairTooltip');
+  priceChart.subscribeCrosshairMove(param => {
+    if (!param || !param.time || !param.seriesData) {
+      tooltip.classList.add('hidden');
+      return;
+    }
+    const candle = param.seriesData.get(candleSeries);
+    if (!candle) { tooltip.classList.add('hidden'); return; }
+    const { year, month, day } = param.time;
+    const cls = candle.close >= candle.open ? 'tt-up' : 'tt-down';
+    // 해당 날짜의 거래량 찾기
+    const dateStr = `${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+    const bar = chartData.find(d => d.date && d.date.startsWith(dateStr));
+    const vol = bar ? bar.volume : null;
+    tooltip.classList.remove('hidden');
+    tooltip.innerHTML = `
+      <div class="tt-date">${year}.${String(month).padStart(2,'0')}.${String(day).padStart(2,'0')}</div>
+      <div class="tt-ohlcv ${cls}">
+        <span>시 ${formatNumber(candle.open)}</span>
+        <span>고 ${formatNumber(candle.high)}</span>
+        <span>저 ${formatNumber(candle.low)}</span>
+        <span>종 ${formatNumber(candle.close)}</span>
+        ${vol != null ? `<span>량 ${(vol/10000).toFixed(0)}만</span>` : ''}
+      </div>`;
+  });
+
   // 이동평균선
   const maConfigs = [
     { period: 5, color: '#f59e0b' }, { period: 20, color: '#3b82f6' },
@@ -603,7 +906,6 @@ function renderChart(chartData) {
       timeScale: { visible: false },
     });
 
-    // MACD 히스토그램
     const histSeries = macdChart.addHistogramSeries({
       priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
     });
@@ -612,14 +914,12 @@ function renderChart(chartData) {
       color: d.histogram >= 0 ? 'rgba(226,41,38,0.5)' : 'rgba(38,121,237,0.5)',
     })));
 
-    // MACD 라인
     const macdLine = macdChart.addLineSeries({
       color: '#2196F3', lineWidth: 1,
       crosshairMarkerVisible: false, lastValueVisible: false, priceLineVisible: false,
     });
     macdLine.setData(macdData.map(d => ({ time: d.time, value: d.macd })));
 
-    // Signal 라인
     const signalLine = macdChart.addLineSeries({
       color: '#FF9800', lineWidth: 1,
       crosshairMarkerVisible: false, lastValueVisible: false, priceLineVisible: false,
@@ -641,6 +941,10 @@ function renderChart(chartData) {
     if (priceChart) priceChart.applyOptions({ width: priceContainer.clientWidth });
     if (volumeChart) volumeChart.applyOptions({ width: volumeContainer.clientWidth });
     if (macdChart) macdChart.applyOptions({ width: macdContainer.clientWidth });
+    if (compareChart) {
+      const cc = document.getElementById('compareChart');
+      if (cc) compareChart.applyOptions({ width: cc.clientWidth });
+    }
   });
   resizeObserverRef.observe(priceContainer);
 
@@ -651,7 +955,6 @@ function renderChart(chartData) {
 // 지지/저항선 차트에 추가
 function renderSRLines(indicators) {
   if (!priceChart || !currentChartData.length) return;
-  // 기존 라인 제거
   srLines.forEach(line => { try { priceChart.removeSeries(line); } catch {} });
   srLines = [];
 
@@ -678,6 +981,50 @@ function renderSRLines(indicators) {
     srLines.push(line);
   });
 }
+
+// ==================== 지표 설명 팝업 ====================
+const INDICATOR_EXPLANATIONS = {
+  'RSI (14)': {
+    title: 'RSI (상대강도지수)',
+    body: '<strong>RSI</strong>는 14일간의 가격 변동 강도를 0~100으로 나타냅니다.<br><br><strong>70 이상</strong>: 과매수 구간 - 가격이 과도하게 상승했을 수 있음<br><strong>30 이하</strong>: 과매도 구간 - 가격이 과도하게 하락했을 수 있음<br><strong>50 부근</strong>: 중립 - 매수/매도 힘이 균형'
+  },
+  'MACD': {
+    title: 'MACD (이동평균수렴확산)',
+    body: '<strong>MACD</strong>는 12일 EMA와 26일 EMA의 차이입니다.<br><br><strong>MACD > Signal</strong>: 상승 모멘텀 (매수 신호)<br><strong>MACD < Signal</strong>: 하락 모멘텀 (매도 신호)<br><strong>히스토그램</strong>: 두 선의 차이를 시각화. 확대되면 추세 강화'
+  },
+  '스토캐스틱': {
+    title: '스토캐스틱 오실레이터',
+    body: '<strong>%K</strong>는 현재가가 최근 14일 범위에서 어느 위치인지를 나타냅니다.<br><br><strong>80 이상</strong>: 과매수 - 단기 고점 가능성<br><strong>20 이하</strong>: 과매도 - 단기 저점 가능성<br>%K가 %D를 상향 돌파하면 매수, 하향 돌파하면 매도 신호'
+  },
+  '이평선 배열': {
+    title: '이동평균선 배열',
+    body: '<strong>정배열</strong>: MA5 > MA20 > MA60 — 강세장 (단기선이 장기선 위)<br><strong>역배열</strong>: MA5 < MA20 < MA60 — 약세장 (단기선이 장기선 아래)<br><strong>혼조</strong>: 추세 전환 가능성. 방향성이 불확실한 상태'
+  },
+  '볼린저': {
+    title: '볼린저 밴드',
+    body: '20일 이동평균 ± 2표준편차로 구성됩니다.<br><br><strong>밴드 상단 이탈</strong>: 과매수 가능성<br><strong>밴드 하단 이탈</strong>: 과매도 / 반등 기대<br><strong>밴드 폭(Width)</strong>이 좁아지면 큰 변동성 돌발 예고'
+  },
+  '거래량': {
+    title: '거래량 비율',
+    body: '최근 거래량을 20일 평균 거래량으로 나눈 비율입니다.<br><br><strong>2x 이상</strong>: 급증 - 시장 관심 폭발<br><strong>0.5x 미만</strong>: 부진 - 관심 저조<br>가격 상승 + 거래량 급증 = 강한 매수세<br>가격 하락 + 거래량 급증 = 매도 압력 강화'
+  },
+};
+
+function showIndicatorPopup(label) {
+  const info = INDICATOR_EXPLANATIONS[label];
+  if (!info) return;
+  document.getElementById('popupTitle').textContent = info.title;
+  document.getElementById('popupBody').innerHTML = info.body;
+  document.getElementById('indicatorPopup').classList.remove('hidden');
+}
+
+function closeIndicatorPopup() {
+  document.getElementById('indicatorPopup').classList.add('hidden');
+}
+
+document.getElementById('indicatorPopup').addEventListener('click', (e) => {
+  if (e.target.id === 'indicatorPopup') closeIndicatorPopup();
+});
 
 function renderIndicators(indicators) {
   const grid = document.getElementById('indicatorsGrid');
@@ -707,12 +1054,14 @@ function renderIndicators(indicators) {
       desc: indicators.거래량비율 > 2 ? '급증' : indicators.거래량비율 < 0.5 ? '부진' : '보통' },
   ];
 
-  grid.innerHTML = items.map(item => `
-    <div class="indicator-card">
+  grid.innerHTML = items.map(item => {
+    const hasPopup = INDICATOR_EXPLANATIONS[item.label] ? 'onclick="showIndicatorPopup(\'' + item.label + '\')"' : '';
+    return `<div class="indicator-card" ${hasPopup}>
       <div class="indicator-label">${item.label}</div>
       <div class="indicator-value ${item.cls}">${item.value}</div>
       <div class="indicator-desc">${item.desc}</div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
 
 function getMAAlignment(ind) {
@@ -830,11 +1179,12 @@ function showChartLoading(on) {
 
 function showError(msg) {
   const el = document.getElementById('error');
+  const textEl = document.getElementById('errorText');
   const messages = {
     'AI_TIMEOUT': 'AI 분석 시간이 초과되었습니다. 잠시 후 다시 시도해주세요.',
     'API_QUOTA': 'API 할당량을 초과했습니다. 잠시 후 다시 시도해주세요.',
     'Failed to fetch': '서버에 연결할 수 없습니다. 네트워크를 확인해주세요.',
   };
-  el.textContent = messages[msg] || msg;
+  textEl.textContent = messages[msg] || msg;
   el.classList.remove('hidden');
 }
