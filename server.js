@@ -212,8 +212,12 @@ app.get('/api/search', async (req, res) => {
 
 // 뉴스 API
 app.get('/api/news/:symbol', async (req, res) => {
-  const news = await fetchYahooNews(req.params.symbol);
-  res.json({ news });
+  try {
+    const news = await fetchYahooNews(req.params.symbol);
+    res.json({ news });
+  } catch {
+    res.json({ news: [] });
+  }
 });
 
 // 환율 API
@@ -268,7 +272,7 @@ app.get('/api/compare', async (req, res) => {
 app.get('/api/stock/:symbol', async (req, res) => {
   try {
     let symbol = req.params.symbol.trim();
-    const validPeriods = ['5d', '1mo', '3mo', '6mo', '1y', '2y'];
+    const validPeriods = ['5d', '1mo', '3mo', '6mo', '1y', '2y', '5y', '10y'];
     const period = validPeriods.includes(req.query.period) ? req.query.period : '1y';
     const yahooSymbol = toYahooSymbol(symbol);
     const displaySymbol = symbol.replace(/\.(KS|KQ)$/, '');
