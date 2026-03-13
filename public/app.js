@@ -159,10 +159,11 @@ async function fetchWatchlistPrices() {
     for (const [sym, info] of Object.entries(data.prices || {})) {
       const el = document.getElementById(`wlPrice_${sym}`);
       if (!el) continue;
-      const sign = info.changePercent >= 0 ? '+' : '';
-      const cls = info.changePercent >= 0 ? 'up' : 'down';
+      const pct = info.changePercent ?? 0;
+      const sign = pct >= 0 ? '+' : '';
+      const cls = pct >= 0 ? 'up' : 'down';
       el.className = `wl-price ${cls}`;
-      el.textContent = `${sign}${info.changePercent.toFixed(1)}%`;
+      el.textContent = `${sign}${pct.toFixed(1)}%`;
     }
   } catch {}
 }
@@ -807,7 +808,7 @@ function renderSummary(quote, symbol) {
     <div class="info-grid">
       <div class="info-cell"><span class="info-label">전일</span><span class="info-value">${formatNumber(quote.previousClose)}</span></div>
       <div class="info-cell"><span class="info-label">고가</span><span class="info-value up">${formatNumber(quote.dayHigh)}</span></div>
-      <div class="info-cell"><span class="info-label">시가</span><span class="info-value">${formatNumber(quote.price)}</span></div>
+      <div class="info-cell"><span class="info-label">시가</span><span class="info-value">${formatNumber(quote.open || quote.price)}</span></div>
       <div class="info-cell"><span class="info-label">저가</span><span class="info-value down">${formatNumber(quote.dayLow)}</span></div>
       <div class="info-cell"><span class="info-label">거래량</span><span class="info-value">${quote.volume ? quote.volume.toLocaleString() + '주' : 'N/A'}</span></div>
       ${quote.marketCap ? `<div class="info-cell"><span class="info-label">시가총액</span><span class="info-value">${formatMarketCap(quote.marketCap, quote.currency)}</span></div>` : `<div class="info-cell"><span class="info-label">통화</span><span class="info-value">${quote.currency || '-'}</span></div>`}
@@ -861,8 +862,12 @@ function renderChart(chartData) {
     time: toChartTime(d.date), open: d.open, high: d.high, low: d.low, close: d.close,
   })));
 
-  // 크로스헤어 툴팁
+  // 크로스헤어 툴팁 (Map으로 O(1) 조회)
   const tooltip = document.getElementById('crosshairTooltip');
+  const volumeMap = new Map();
+  chartData.forEach(d => {
+    if (d.date) volumeMap.set(d.date.slice(0, 10), d.volume);
+  });
   priceChart.subscribeCrosshairMove(param => {
     if (!param || !param.time || !param.seriesData) {
       tooltip.classList.add('hidden');
@@ -873,8 +878,7 @@ function renderChart(chartData) {
     const { year, month, day } = param.time;
     const cls = candle.close >= candle.open ? 'tt-up' : 'tt-down';
     const dateStr = `${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
-    const bar = chartData.find(d => d.date && d.date.startsWith(dateStr));
-    const vol = bar ? bar.volume : null;
+    const vol = volumeMap.get(dateStr) ?? null;
     tooltip.classList.remove('hidden');
     tooltip.innerHTML = `
       <div class="tt-date">${year}.${String(month).padStart(2,'0')}.${String(day).padStart(2,'0')}</div>
@@ -1210,7 +1214,6 @@ function formatMarketCap(cap, currency) {
 
 function show(id) { document.getElementById(id).classList.remove('hidden'); }
 function hide(id) { document.getElementById(id).classList.add('hidden'); }
-function setText(id, text) { document.getElementById(id).textContent = text; }
 
 function showChartLoading(on) {
   const container = document.querySelector('.chart-section');

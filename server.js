@@ -28,8 +28,11 @@ if (!process.env.GEMINI_API_KEY) {
 }
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-process.on('uncaughtException', (err) => console.error('Uncaught Exception:', err.message));
-process.on('unhandledRejection', (err) => console.error('Unhandled Rejection:', err.message));
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught Exception:', err.message);
+  process.exit(1);
+});
+process.on('unhandledRejection', (err) => console.error('Unhandled Rejection:', err?.message || err));
 
 // ========================
 //   캐시 (5분 TTL)
@@ -45,7 +48,15 @@ function getCached(key) {
 }
 function setCache(key, data) {
   cache.set(key, { data, ts: Date.now() });
-  if (cache.size > 200) cache.delete(cache.keys().next().value);
+  if (cache.size > 200) {
+    // 만료된 엔트리 우선 제거
+    const now = Date.now();
+    let deleted = false;
+    for (const [k, v] of cache) {
+      if (now - v.ts > CACHE_TTL) { cache.delete(k); deleted = true; break; }
+    }
+    if (!deleted) cache.delete(cache.keys().next().value);
+  }
 }
 
 // ========================
@@ -124,6 +135,7 @@ async function fetchYahooChart(symbol, range) {
   const quote = {
     name: KR_STOCK_NAMES[symbol.replace(/\.(KS|KQ)$/, '')] || meta.shortName || meta.longName || symbol,
     price: meta.regularMarketPrice || 0,
+    open: meta.regularMarketOpen || null,
     change: (meta.regularMarketPrice || 0) - (meta.chartPreviousClose || meta.previousClose || 0),
     changePercent: meta.chartPreviousClose
       ? (((meta.regularMarketPrice - meta.chartPreviousClose) / meta.chartPreviousClose) * 100) : 0,
@@ -222,8 +234,12 @@ app.get('/api/news/:symbol', async (req, res) => {
 
 // 환율 API
 app.get('/api/exchange-rate', async (req, res) => {
-  const rate = await fetchExchangeRate();
-  res.json({ rate });
+  try {
+    const rate = await fetchExchangeRate();
+    res.json({ rate });
+  } catch {
+    res.json({ rate: 1350 });
+  }
 });
 
 // 워치리스트 시세
@@ -246,7 +262,8 @@ app.post('/api/watchlist-prices', async (req, res) => {
 app.get('/api/compare', async (req, res) => {
   try {
     const symbols = (req.query.symbols || '').split(',').map(s => s.trim()).filter(Boolean).slice(0, 3);
-    const period = req.query.period || '1y';
+    const validPeriods = ['5d', '1mo', '3mo', '6mo', '1y', '2y', '5y', '10y'];
+    const period = validPeriods.includes(req.query.period) ? req.query.period : '1y';
     if (symbols.length < 2) return res.status(400).json({ success: false, error: '2개 이상 종목이 필요합니다' });
 
     const results = await Promise.all(symbols.map(async sym => {
@@ -410,9 +427,10 @@ ${newsText}
       return;
     }
 
+    let timeoutId;
     const result = await Promise.race([
-      model.generateContent(prompt),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('AI_TIMEOUT')), 120000))
+      model.generateContent(prompt).then(r => { clearTimeout(timeoutId); return r; }),
+      new Promise((_, reject) => { timeoutId = setTimeout(() => reject(new Error('AI_TIMEOUT')), 120000); })
     ]);
     res.json({ success: true, analysis: result.response.text(), indicators });
   } catch (err) {

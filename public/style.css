@@ -742,7 +742,7 @@ body {
 
 .period-selector {
   display: grid;
-  grid-template-columns: repeat(6, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 4px;
   padding-top: 10px;
   border-top: 1px solid var(--border-light);
@@ -1142,7 +1142,7 @@ body {
   .info-grid { grid-template-columns: 1fr; }
   .info-cell:nth-child(odd) { border-right: none; }
   .indicators-grid { grid-template-columns: repeat(2, 1fr); }
-  .period-selector { grid-template-columns: repeat(3, 1fr); }
+  .period-selector { grid-template-columns: repeat(4, 1fr); }
   .analysis-header { flex-direction: column; gap: 8px; align-items: flex-start; }
   .analysis-actions { width: 100%; }
   .analysis-actions .re-analyze-btn { flex: 1; text-align: center; }

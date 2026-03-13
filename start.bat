@@ -16,6 +16,5 @@ start /b node server.js
 timeout /t 2 /nobreak >nul
 start http://localhost:8120
 echo 브라우저가 열렸습니다. 이 창을 닫으면 서버가 종료됩니다.
-echo 종료하려면 Ctrl+C를 누르세요.
+echo 종료하려면 아무 키나 누르세요.
 pause >nul
-pause
