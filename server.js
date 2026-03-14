@@ -30,7 +30,8 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 process.on('uncaughtException', (err) => {
   console.error('Uncaught Exception:', err.message);
-  process.exit(1);
+  // 서버 소켓 에러가 아닌 경우에만 종료
+  if (err.code === 'EADDRINUSE' || err.code === 'EACCES') process.exit(1);
 });
 process.on('unhandledRejection', (err) => console.error('Unhandled Rejection:', err?.message || err));
 
@@ -132,18 +133,25 @@ async function fetchYahooChart(symbol, range) {
   const timestamps = result.timestamp || [];
   const q = result.indicators?.quote?.[0] || {};
 
+  // previousClose = 전일 종가 (일일 변동 계산용)
+  // chartPreviousClose = 차트 시작 전 종가 (기간 수익률용)
+  const prevClose = meta.previousClose || meta.chartPreviousClose || 0;
+  const curPrice = meta.regularMarketPrice || 0;
+
+  // 시가: 마지막 거래일의 open 값 (meta에 없을 수 있으므로 chartData에서 추출)
+  const lastOpen = q.open?.[timestamps.length - 1] || null;
+
   const quote = {
     name: KR_STOCK_NAMES[symbol.replace(/\.(KS|KQ)$/, '')] || meta.shortName || meta.longName || symbol,
-    price: meta.regularMarketPrice || 0,
-    open: meta.regularMarketOpen || null,
-    change: (meta.regularMarketPrice || 0) - (meta.chartPreviousClose || meta.previousClose || 0),
-    changePercent: meta.chartPreviousClose
-      ? (((meta.regularMarketPrice - meta.chartPreviousClose) / meta.chartPreviousClose) * 100) : 0,
+    price: curPrice,
+    open: meta.regularMarketOpen || lastOpen,
+    change: curPrice - prevClose,
+    changePercent: prevClose ? ((curPrice - prevClose) / prevClose * 100) : 0,
     volume: meta.regularMarketVolume || 0,
     marketCap: null,
     fiftyTwoWeekHigh: meta.fiftyTwoWeekHigh || null,
     fiftyTwoWeekLow: meta.fiftyTwoWeekLow || null,
-    previousClose: meta.chartPreviousClose || meta.previousClose || null,
+    previousClose: prevClose || null,
     dayHigh: meta.regularMarketDayHigh || null,
     dayLow: meta.regularMarketDayLow || null,
     currency: meta.currency || '',
@@ -225,7 +233,8 @@ app.get('/api/search', async (req, res) => {
 // 뉴스 API
 app.get('/api/news/:symbol', async (req, res) => {
   try {
-    const news = await fetchYahooNews(req.params.symbol);
+    const symbol = decodeURIComponent(req.params.symbol);
+    const news = await fetchYahooNews(symbol);
     res.json({ news });
   } catch {
     res.json({ news: [] });
@@ -293,7 +302,15 @@ app.get('/api/stock/:symbol', async (req, res) => {
     const period = validPeriods.includes(req.query.period) ? req.query.period : '1y';
     const yahooSymbol = toYahooSymbol(symbol);
     const displaySymbol = symbol.replace(/\.(KS|KQ)$/, '');
-    const { quote, chartData } = await fetchYahooChart(yahooSymbol, period);
+
+    // 차트 데이터는 선택 기간으로, 시세(quote)는 항상 5d로 정확한 전일대비 계산
+    const [chartResult, quoteResult] = await Promise.all([
+      fetchYahooChart(yahooSymbol, period),
+      period !== '5d' ? fetchYahooChart(yahooSymbol, '5d') : null,
+    ]);
+
+    const { chartData } = chartResult;
+    const quote = quoteResult ? quoteResult.quote : chartResult.quote;
     if (chartData.length === 0) throw new Error('차트 데이터가 없습니다.');
 
     // 해외 종목이면 환율 정보 추가
@@ -545,6 +562,15 @@ function calcSignalScore({ rsi, macd, ma5, ma20, ma60, bb, latestClose, volRatio
 
   return Math.max(0, Math.min(100, Math.round(score)));
 }
+
+// 글로벌 에러 핸들러 (URIError 등)
+app.use((err, req, res, _next) => {
+  if (err instanceof URIError) {
+    return res.status(400).json({ success: false, error: '잘못된 URL 인코딩입니다.' });
+  }
+  console.error('Unhandled route error:', err.message);
+  res.status(500).json({ success: false, error: '서버 오류가 발생했습니다.' });
+});
 
 const server = app.listen(PORT, () => {
   console.log(`주식 분석기 서버 실행 중: http://localhost:${PORT}`);

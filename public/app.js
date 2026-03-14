@@ -243,14 +243,70 @@ function toggleCompareMode() {
   }
 }
 
-function addCompareSymbol() {
+function addCompareSymbol(symbolOverride) {
   const input = document.getElementById('compareSymbol');
-  const sym = input.value.trim();
+  const sym = (symbolOverride || input.value).trim();
   if (!sym || compareSymbols.length >= 2) return;
-  if (!compareSymbols.includes(sym)) compareSymbols.push(sym);
+  // 한글 종목명이면 코드로 변환
+  const match = KR_STOCKS.find(s => s.name === sym);
+  const resolvedSym = match ? match.symbol : sym;
+  if (!compareSymbols.includes(resolvedSym)) compareSymbols.push(resolvedSym);
   input.value = '';
+  hideCompareDropdown();
   renderCompareChips();
 }
+
+// 비교 종목 자동완성
+let compareSearchTimeout = null;
+const compareInput = document.getElementById('compareSymbol');
+if (compareInput) {
+  compareInput.addEventListener('input', () => {
+    clearTimeout(compareSearchTimeout);
+    const q = compareInput.value.trim();
+    if (q.length < 1) { hideCompareDropdown(); return; }
+    const local = searchLocalStocks(q);
+    if (local.length > 0) showCompareDropdown(local);
+    compareSearchTimeout = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
+        const data = await res.json();
+        const localSyms = new Set(local.map(r => r.symbol));
+        const merged = [...local, ...(data.results || []).filter(r => !localSyms.has(r.symbol))].slice(0, 6);
+        if (merged.length > 0) showCompareDropdown(merged); else hideCompareDropdown();
+      } catch {}
+    }, 200);
+  });
+}
+
+function showCompareDropdown(results) {
+  let dd = document.getElementById('compareDropdown');
+  if (!dd) {
+    dd = document.createElement('div');
+    dd.id = 'compareDropdown';
+    dd.className = 'search-dropdown';
+    compareInput.parentElement.appendChild(dd);
+  }
+  dd.innerHTML = results.map(r => {
+    const displaySym = r.symbol.replace(/\.(KS|KQ)$/, '');
+    return `<div class="dropdown-item" data-symbol="${escapeHtml(r.symbol)}">
+      <span class="dropdown-symbol">${escapeHtml(displaySym)}</span>
+      <span class="dropdown-name">${escapeHtml(r.name)}</span>
+    </div>`;
+  }).join('');
+  dd.querySelectorAll('.dropdown-item').forEach(item => {
+    item.addEventListener('click', () => { addCompareSymbol(item.dataset.symbol); });
+  });
+  dd.classList.add('show');
+}
+
+function hideCompareDropdown() {
+  const dd = document.getElementById('compareDropdown');
+  if (dd) dd.classList.remove('show');
+}
+
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.compare-inputs')) hideCompareDropdown();
+});
 
 function removeCompareSymbol(sym) {
   compareSymbols = compareSymbols.filter(s => s !== sym);
@@ -312,6 +368,15 @@ function renderCompareChart(results) {
 
 // ==================== 키보드 단축키 ====================
 document.addEventListener('keydown', (e) => {
+  // ESC: 팝업/패널 닫기
+  if (e.key === 'Escape') {
+    const popup = document.getElementById('indicatorPopup');
+    if (!popup.classList.contains('hidden')) { closeIndicatorPopup(); return; }
+    const wl = document.getElementById('watchlistPanel');
+    if (!wl.classList.contains('hidden')) { toggleWatchlist(); return; }
+    const hp = document.getElementById('historyPanel');
+    if (!hp.classList.contains('hidden')) { toggleHistoryPanel(); return; }
+  }
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
   if (e.key === '/' || e.key === 'ㅊ') { e.preventDefault(); symbolInput.focus(); }
   else if (e.key === 'd' || e.key === 'D' || e.key === 'ㅇ') { toggleDarkMode(); }
@@ -590,6 +655,7 @@ async function fetchStockData(symbol, period = '1y') {
   currentChartData = data.chartData;
 
   renderSummary(data.quote, data.symbol);
+  renderPeriodReturn(data.chartData, period);
   renderChart(data.chartData);
   show('result');
 
@@ -610,15 +676,16 @@ async function fetchNews(symbol) {
     const section = document.getElementById('newsSection');
     const list = document.getElementById('newsList');
     if (data.news && data.news.length > 0) {
-      list.innerHTML = data.news.map(n => `
-        <div class="news-item">
+      list.innerHTML = data.news.map(n => {
+        const linkAttr = n.link ? `onclick="window.open('${escapeHtml(n.link)}','_blank')" style="cursor:pointer"` : '';
+        return `<div class="news-item" ${linkAttr}>
           <div class="news-item-title">${escapeHtml(n.title)}</div>
           <div class="news-item-meta">
             <div class="news-item-publisher">${escapeHtml(n.publisher)}</div>
             <div>${escapeHtml(n.date)}</div>
           </div>
-        </div>
-      `).join('');
+        </div>`;
+      }).join('');
       section.classList.remove('hidden');
     } else {
       section.classList.add('hidden');
@@ -813,6 +880,21 @@ function renderSummary(quote, symbol) {
       <div class="info-cell"><span class="info-label">거래량</span><span class="info-value">${quote.volume ? quote.volume.toLocaleString() + '주' : 'N/A'}</span></div>
       ${quote.marketCap ? `<div class="info-cell"><span class="info-label">시가총액</span><span class="info-value">${formatMarketCap(quote.marketCap, quote.currency)}</span></div>` : `<div class="info-cell"><span class="info-label">통화</span><span class="info-value">${quote.currency || '-'}</span></div>`}
     </div>`;
+}
+
+// ==================== 기간 수익률 ====================
+function renderPeriodReturn(chartData, period) {
+  const container = document.getElementById('periodReturn');
+  if (!container || chartData.length < 2) { if (container) container.classList.add('hidden'); return; }
+  const first = chartData[0].close;
+  const last = chartData[chartData.length - 1].close;
+  const ret = ((last - first) / first) * 100;
+  const periodLabels = { '5d': '5일', '1mo': '1개월', '3mo': '3개월', '6mo': '6개월', '1y': '1년', '2y': '2년', '5y': '5년', '10y': '10년' };
+  const label = periodLabels[period] || period;
+  const sign = ret >= 0 ? '+' : '';
+  const cls = ret >= 0 ? 'up' : 'down';
+  container.innerHTML = `<span class="${cls}">${label} 수익률: ${sign}${ret.toFixed(2)}%</span>`;
+  container.classList.remove('hidden');
 }
 
 function cleanupCharts() {

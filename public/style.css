@@ -277,6 +277,7 @@ body {
   gap: 6px;
   margin-top: 8px;
   flex-wrap: wrap;
+  position: relative;
 }
 
 .compare-input {
@@ -532,6 +533,19 @@ body {
   margin-top: 4px;
   font-weight: 600;
 }
+
+/* 기간 수익률 */
+.period-return-bar {
+  border-bottom: 1px solid var(--border-light);
+  padding: 8px 16px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-align: center;
+  background: var(--bg-card);
+}
+
+.period-return-bar .up { color: var(--up); }
+.period-return-bar .down { color: var(--down); }
 
 /* 환율 바 */
 .exchange-rate-bar {
@@ -933,6 +947,7 @@ body {
 }
 
 .news-item:last-child { border-bottom: none; }
+.news-item[onclick]:hover { background: var(--dropdown-hover); border-radius: 6px; }
 .news-item-title { font-size: 0.82rem; color: var(--text); font-weight: 500; line-height: 1.45; flex: 1; }
 .news-item-meta { font-size: 0.68rem; color: var(--text-muted); white-space: nowrap; text-align: right; }
 .news-item-publisher { font-weight: 600; }
