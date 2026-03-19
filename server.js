@@ -9,9 +9,15 @@ const PORT = process.env.PORT || 8120;
 
 app.use(cors({ origin: [`http://localhost:${PORT}`, `http://127.0.0.1:${PORT}`] }));
 app.use(express.json({ limit: '1mb' }));
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  next();
+});
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Rate Limiting (IP당 분당 30회, 슬라이딩 윈도우)
+// Rate Limiting (IP당 분당 30회, 고정 윈도우)
 const rateMap = new Map();
 setInterval(() => {
   const now = Date.now();
@@ -71,6 +77,13 @@ function evictCache() {
     cache.delete(cache.keys().next().value);
   }
 }
+// 주기적 TTL 만료 캐시 정리 (60초마다)
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, v] of cache) {
+    if (now - v.ts > CACHE_TTL) cache.delete(k);
+  }
+}, 60000);
 
 // ========================
 //   한국 종목 매핑
@@ -245,7 +258,7 @@ app.get('/api/search', async (req, res) => {
 // 뉴스 API
 app.get('/api/news/:symbol', async (req, res) => {
   try {
-    const symbol = decodeURIComponent(req.params.symbol);
+    const symbol = req.params.symbol;
     const news = await fetchYahooNews(symbol);
     res.json({ news });
   } catch {
@@ -456,12 +469,11 @@ ${newsText}
       return;
     }
 
-    const abortCtrl = new AbortController();
     let timeoutId;
     try {
       const result = await Promise.race([
-        model.generateContent({ contents: [{ role: 'user', parts: [{ text: prompt }] }] }, { signal: abortCtrl.signal }),
-        new Promise((_, reject) => { timeoutId = setTimeout(() => { abortCtrl.abort(); reject(new Error('AI_TIMEOUT')); }, 120000); })
+        model.generateContent(prompt),
+        new Promise((_, reject) => { timeoutId = setTimeout(() => reject(new Error('AI_TIMEOUT')), 120000); })
       ]);
       clearTimeout(timeoutId);
       res.json({ success: true, analysis: result.response.text(), indicators });

@@ -21,6 +21,7 @@ let bbSeries = { upper: null, lower: null };
 let srLines = [];
 let overlayVisible = { bb: false, sr: false };
 let currentIndicators = null;
+let compareTimeRangeUnsubscribe = null;
 
 const SANITIZE_CONFIG = {
   ALLOWED_TAGS: ['h1','h2','h3','h4','h5','h6','p','br','hr','ul','ol','li','strong','em','a','code','pre','blockquote','table','thead','tbody','tr','th','td','div','span'],
@@ -334,6 +335,7 @@ async function fetchCompareData() {
 function renderCompareChart(results) {
   const container = document.getElementById('compareChart');
   container.classList.remove('hidden');
+  if (compareTimeRangeUnsubscribe) { compareTimeRangeUnsubscribe(); compareTimeRangeUnsubscribe = null; }
   if (compareChart) { compareChart.remove(); compareChart = null; }
 
   const colors = getChartColors();
@@ -359,10 +361,12 @@ function renderCompareChart(results) {
   compareChart.timeScale().fitContent();
 
   if (priceChart) {
-    priceChart.timeScale().subscribeVisibleLogicalRangeChange(range => {
+    const handler = range => {
       if (!range || !compareChart) return;
       compareChart.timeScale().setVisibleLogicalRange(range);
-    });
+    };
+    priceChart.timeScale().subscribeVisibleLogicalRangeChange(handler);
+    compareTimeRangeUnsubscribe = () => priceChart.timeScale().unsubscribeVisibleLogicalRangeChange(handler);
   }
 }
 
@@ -919,6 +923,7 @@ function renderPeriodReturn(chartData, period) {
 
 function cleanupCharts() {
   if (resizeObserverRef) { resizeObserverRef.disconnect(); resizeObserverRef = null; }
+  if (compareTimeRangeUnsubscribe) { compareTimeRangeUnsubscribe(); compareTimeRangeUnsubscribe = null; }
   if (priceChart) { priceChart.remove(); priceChart = null; }
   if (volumeChart) { volumeChart.remove(); volumeChart = null; }
   if (macdChart) { macdChart.remove(); macdChart = null; }
