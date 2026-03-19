@@ -18,3 +18,6 @@ start http://localhost:8120
 echo 브라우저가 열렸습니다. 이 창을 닫으면 서버가 종료됩니다.
 echo 종료하려면 아무 키나 누르세요.
 pause >nul
+echo 서버 종료 중...
+taskkill /f /im node.exe /fi "WINDOWTITLE eq *server.js*" >nul 2>&1
+for /f "tokens=5" %%a in ('netstat -aon ^| findstr :8120 ^| findstr LISTENING') do taskkill /f /pid %%a >nul 2>&1

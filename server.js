@@ -50,13 +50,13 @@ function getCached(key) {
 function setCache(key, data) {
   cache.set(key, { data, ts: Date.now() });
   if (cache.size > 200) {
-    // 만료된 엔트리 우선 제거
+    // 만료된 엔트리 전부 제거
     const now = Date.now();
-    let deleted = false;
     for (const [k, v] of cache) {
-      if (now - v.ts > CACHE_TTL) { cache.delete(k); deleted = true; break; }
+      if (now - v.ts > CACHE_TTL) cache.delete(k);
     }
-    if (!deleted) cache.delete(cache.keys().next().value);
+    // 아직도 200 초과면 가장 오래된 것 제거
+    if (cache.size > 200) cache.delete(cache.keys().next().value);
   }
 }
 

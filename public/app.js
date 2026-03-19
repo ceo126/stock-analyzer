@@ -587,10 +587,16 @@ function getMarketStatus(exchange) {
     const kstMin = kstH * 60 + utcM;
     return (kstMin >= 540 && kstMin <= 930) ? 'open' : 'closed';
   }
-  // 미국 (NYSE, NASDAQ, NMS): UTC-4(EDT), 09:30~16:00
-  const estH = (utcH - 4 + 24) % 24;
-  const estMin = estH * 60 + utcM;
-  return (estMin >= 570 && estMin <= 960) ? 'open' : 'closed';
+  // 미국 (NYSE, NASDAQ, NMS): EDT(UTC-4) / EST(UTC-5), 09:30~16:00
+  // DST: 3월 두번째 일요일 ~ 11월 첫번째 일요일
+  const year = now.getUTCFullYear();
+  const mar2ndSun = new Date(Date.UTC(year, 2, 8 + (7 - new Date(Date.UTC(year, 2, 8)).getUTCDay()) % 7, 7));
+  const nov1stSun = new Date(Date.UTC(year, 10, 1 + (7 - new Date(Date.UTC(year, 10, 1)).getUTCDay()) % 7, 6));
+  const isDST = now >= mar2ndSun && now < nov1stSun;
+  const usOffset = isDST ? 4 : 5;
+  const usH = (utcH - usOffset + 24) % 24;
+  const usMin = usH * 60 + utcM;
+  return (usMin >= 570 && usMin <= 960) ? 'open' : 'closed';
 }
 
 // ==================== 메인 분석 ====================
@@ -677,7 +683,8 @@ async function fetchNews(symbol) {
     const list = document.getElementById('newsList');
     if (data.news && data.news.length > 0) {
       list.innerHTML = data.news.map(n => {
-        const linkAttr = n.link ? `onclick="window.open('${escapeHtml(n.link)}','_blank')" style="cursor:pointer"` : '';
+        const safeLink = n.link && /^https?:\/\//.test(n.link) ? n.link : '';
+        const linkAttr = safeLink ? `onclick="window.open('${escapeHtml(safeLink)}','_blank')" style="cursor:pointer"` : '';
         return `<div class="news-item" ${linkAttr}>
           <div class="news-item-title">${escapeHtml(n.title)}</div>
           <div class="news-item-meta">
@@ -766,12 +773,16 @@ async function fetchAnalysisStream(signal) {
 }
 
 async function reAnalyze() {
+  if (analyzeController) analyzeController.abort();
+  analyzeController = new AbortController();
+  const signal = analyzeController.signal;
   const btn = document.getElementById('reAnalyzeBtn');
   btn.disabled = true;
   btn.textContent = '분석 중...';
   try {
-    await fetchAnalysisStream();
+    await fetchAnalysisStream(signal);
   } catch (err) {
+    if (err.name === 'AbortError') return;
     showError(err.message);
   } finally {
     btn.disabled = false;
@@ -902,6 +913,7 @@ function cleanupCharts() {
   if (priceChart) { priceChart.remove(); priceChart = null; }
   if (volumeChart) { volumeChart.remove(); volumeChart = null; }
   if (macdChart) { macdChart.remove(); macdChart = null; }
+  if (compareChart) { compareChart.remove(); compareChart = null; }
   maSeries = {};
   bbSeries = { upper: null, lower: null };
   srLines = [];
