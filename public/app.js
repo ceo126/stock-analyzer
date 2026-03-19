@@ -713,8 +713,17 @@ async function fetchAnalysisStream(signal) {
   });
 
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || '분석에 실패했습니다');
+    let errMsg = '분석에 실패했습니다';
+    try {
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        const err = await res.json();
+        errMsg = err.error || errMsg;
+      } else {
+        errMsg = await res.text() || errMsg;
+      }
+    } catch {}
+    throw new Error(errMsg);
   }
 
   const reader = res.body.getReader();

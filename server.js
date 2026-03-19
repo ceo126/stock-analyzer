@@ -11,14 +11,24 @@ app.use(cors({ origin: [`http://localhost:${PORT}`, `http://127.0.0.1:${PORT}`] 
 app.use(express.json({ limit: '1mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Rate Limiting (IP당 분당 30회)
+// Rate Limiting (IP당 분당 30회, 슬라이딩 윈도우)
 const rateMap = new Map();
-setInterval(() => rateMap.clear(), 60000);
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, entry] of rateMap) {
+    if (now - entry.start > 60000) rateMap.delete(ip);
+  }
+}, 30000);
 app.use('/api', (req, res, next) => {
   const ip = req.ip;
-  const count = (rateMap.get(ip) || 0) + 1;
-  rateMap.set(ip, count);
-  if (count > 30) return res.status(429).json({ success: false, error: '요청이 너무 많습니다. 잠시 후 다시 시도해주세요.' });
+  const now = Date.now();
+  const entry = rateMap.get(ip);
+  if (!entry || now - entry.start > 60000) {
+    rateMap.set(ip, { start: now, count: 1 });
+  } else {
+    entry.count++;
+    if (entry.count > 30) return res.status(429).json({ success: false, error: '요청이 너무 많습니다. 잠시 후 다시 시도해주세요.' });
+  }
   next();
 });
 
@@ -49,14 +59,16 @@ function getCached(key) {
 }
 function setCache(key, data) {
   cache.set(key, { data, ts: Date.now() });
-  if (cache.size > 200) {
-    // 만료된 엔트리 전부 제거
-    const now = Date.now();
-    for (const [k, v] of cache) {
-      if (now - v.ts > CACHE_TTL) cache.delete(k);
-    }
-    // 아직도 200 초과면 가장 오래된 것 제거
-    if (cache.size > 200) cache.delete(cache.keys().next().value);
+  if (cache.size > 200) evictCache();
+}
+function evictCache() {
+  const now = Date.now();
+  for (const [k, v] of cache) {
+    if (now - v.ts > CACHE_TTL) cache.delete(k);
+  }
+  // 아직도 200 초과면 가장 오래된 것 제거
+  while (cache.size > 200) {
+    cache.delete(cache.keys().next().value);
   }
 }
 
@@ -444,12 +456,19 @@ ${newsText}
       return;
     }
 
+    const abortCtrl = new AbortController();
     let timeoutId;
-    const result = await Promise.race([
-      model.generateContent(prompt).then(r => { clearTimeout(timeoutId); return r; }),
-      new Promise((_, reject) => { timeoutId = setTimeout(() => reject(new Error('AI_TIMEOUT')), 120000); })
-    ]);
-    res.json({ success: true, analysis: result.response.text(), indicators });
+    try {
+      const result = await Promise.race([
+        model.generateContent({ contents: [{ role: 'user', parts: [{ text: prompt }] }] }, { signal: abortCtrl.signal }),
+        new Promise((_, reject) => { timeoutId = setTimeout(() => { abortCtrl.abort(); reject(new Error('AI_TIMEOUT')); }, 120000); })
+      ]);
+      clearTimeout(timeoutId);
+      res.json({ success: true, analysis: result.response.text(), indicators });
+    } catch (innerErr) {
+      clearTimeout(timeoutId);
+      throw innerErr;
+    }
   } catch (err) {
     console.error('Analysis error:', err.message);
     const code = err.message;
