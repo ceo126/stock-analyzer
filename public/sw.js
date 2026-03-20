@@ -1,4 +1,4 @@
-const CACHE_NAME = 'stock-analyzer-v4';
+const CACHE_NAME = 'stock-analyzer-v5';
 const STATIC_ASSETS = ['/', '/style.css', '/app.js'];
 
 self.addEventListener('install', (e) => {

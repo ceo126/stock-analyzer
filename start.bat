@@ -13,10 +13,11 @@ if not exist node_modules (
 
 echo 서버 시작 중... (http://localhost:8120)
 start /b node server.js
+set SERVER_PID=%ERRORLEVEL%
 timeout /t 2 /nobreak >nul
 start http://localhost:8120
 echo 브라우저가 열렸습니다. 이 창을 닫으면 서버가 종료됩니다.
 echo 종료하려면 아무 키나 누르세요.
 pause >nul
 echo 서버 종료 중...
-for /f "tokens=5" %%a in ('netstat -aon ^| findstr :8120 ^| findstr LISTENING') do taskkill /f /pid %%a >nul 2>&1
+for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":8120 " ^| findstr LISTENING') do taskkill /f /pid %%a >nul 2>&1

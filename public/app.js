@@ -794,7 +794,7 @@ async function fetchAnalysisStream(signal) {
           saveAnalysisToHistory(currentSymbol, currentQuote.name, currentIndicators.종합스코어, fullText);
         }
       } else if (msg.type === 'error') {
-        content.innerHTML = `<div class="analysis-time">분석 시점: ${timeStr}</div><p style="color:var(--up);">${escapeHtml(msg.error)}</p>`;
+        content.innerHTML = `<div class="analysis-time">분석 시점: ${timeStr}</div><p style="color:#dc2626;font-weight:600;">${escapeHtml(msg.error)}</p>`;
       }
     } catch {}
   }

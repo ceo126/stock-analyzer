@@ -27,7 +27,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // Rate Limiting (IP당 분당 30회, 고정 윈도우)
 const rateMap = new Map();
-setInterval(() => {
+const rateCleanupTimer = setInterval(() => {
   const now = Date.now();
   for (const [ip, entry] of rateMap) {
     if (now - entry.start > 60000) rateMap.delete(ip);
@@ -86,7 +86,7 @@ function evictCache() {
   }
 }
 // 주기적 TTL 만료 캐시 정리 (60초마다)
-setInterval(() => {
+const cacheCleanupTimer = setInterval(() => {
   const now = Date.now();
   for (const [k, v] of cache) {
     if (now - v.ts > CACHE_TTL) cache.delete(k);
@@ -125,7 +125,8 @@ const KR_STOCK_NAMES = {
 };
 
 const KOSDAQ_CODES = new Set([
-  '042700', '196170', '086520', '293490', '035900', '041510',
+  '042700', '196170', '086520', '247540', '263750',
+  '293490', '035900', '041510',
   '112040', '058470', '357780', '240810', '091990', '145020',
   '328130', '326030', '039030', '067160', '095340', '383220',
   '060310', '041190', '257720', '131970',
@@ -616,6 +617,8 @@ const server = app.listen(PORT, () => {
   console.log('데이터 소스: Yahoo Finance');
 });
 function gracefulShutdown() {
+  clearInterval(rateCleanupTimer);
+  clearInterval(cacheCleanupTimer);
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 5000); // 5초 후 강제 종료
 }
