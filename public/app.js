@@ -537,7 +537,7 @@ document.querySelectorAll('.period-btn').forEach(btn => {
       periodController = new AbortController();
       const pSignal = periodController.signal;
       showChartLoading(true);
-      fetchStockData(currentSymbol, btn.dataset.period)
+      fetchStockData(currentSymbol, btn.dataset.period, pSignal)
         .then(() => {
           if (pSignal.aborted) return;
           showChartLoading(false);
@@ -625,7 +625,7 @@ async function analyzeStock() {
 
   try {
     const period = document.querySelector('.period-btn.active')?.dataset.period || '1y';
-    await fetchStockData(input, period);
+    await fetchStockData(input, period, signal);
     if (signal.aborted) return;
 
     if (currentQuote) addSearchHistory(currentSymbol, currentQuote.name, currentQuote.exchange);
@@ -655,8 +655,8 @@ function retryAnalysis() {
   analyzeStock();
 }
 
-async function fetchStockData(symbol, period = '1y') {
-  const res = await fetch(`/api/stock/${encodeURIComponent(symbol)}?period=${period}`);
+async function fetchStockData(symbol, period = '1y', signal) {
+  const res = await fetch(`/api/stock/${encodeURIComponent(symbol)}?period=${period}`, signal ? { signal } : undefined);
   const data = await res.json();
   if (!data.success) throw new Error(data.error || '데이터를 가져올 수 없습니다');
 
@@ -688,8 +688,7 @@ async function fetchNews(symbol) {
     if (data.news && data.news.length > 0) {
       list.innerHTML = data.news.map(n => {
         const safeLink = n.link && /^https?:\/\//.test(n.link) ? n.link : '';
-        const linkAttr = safeLink ? `onclick="window.open('${escapeHtml(safeLink)}','_blank')" style="cursor:pointer"` : '';
-        return `<div class="news-item" ${linkAttr}>
+        return `<div class="news-item${safeLink ? ' news-clickable' : ''}" ${safeLink ? `data-href="${escapeHtml(safeLink)}"` : ''}>
           <div class="news-item-title">${escapeHtml(n.title)}</div>
           <div class="news-item-meta">
             <div class="news-item-publisher">${escapeHtml(n.publisher)}</div>
@@ -697,6 +696,11 @@ async function fetchNews(symbol) {
           </div>
         </div>`;
       }).join('');
+      // 이벤트 위임으로 XSS 방지
+      list.querySelectorAll('.news-clickable').forEach(el => {
+        el.style.cursor = 'pointer';
+        el.addEventListener('click', () => window.open(el.dataset.href, '_blank', 'noopener'));
+      });
       section.classList.remove('hidden');
     } else {
       section.classList.add('hidden');
@@ -746,42 +750,53 @@ async function fetchAnalysisStream(signal) {
 
   while (true) {
     const { done, value } = await reader.read();
-    if (done) break;
+    if (done) {
+      // flush 잔여 바이트 + 남은 버퍼 처리
+      buffer += decoder.decode();
+      break;
+    }
 
     buffer += decoder.decode(value, { stream: true });
     const lines = buffer.split('\n');
     buffer = lines.pop() || '';
 
     for (const line of lines) {
-      if (!line.startsWith('data: ')) continue;
-      try {
-        const msg = JSON.parse(line.slice(6));
-
-        if (msg.type === 'indicators' && !indicatorsReceived) {
-          indicatorsReceived = true;
-          currentIndicators = msg.indicators;
-          renderIndicators(msg.indicators);
-          renderSignalScore(msg.indicators.종합스코어);
-          showProgress('ai');
-          if (msg.indicators.지지선 || msg.indicators.저항선) {
-            renderSRLines(msg.indicators);
-          }
-        } else if (msg.type === 'chunk') {
-          fullText += msg.text;
-          const sanitized = DOMPurify.sanitize(marked.parse(fullText, { breaks: true }), SANITIZE_CONFIG);
-          content.innerHTML = `<div class="analysis-time">분석 시점: ${timeStr}</div>` + sanitized + '<span class="streaming-cursor"></span>';
-        } else if (msg.type === 'done') {
-          const sanitized = DOMPurify.sanitize(marked.parse(fullText, { breaks: true }), SANITIZE_CONFIG);
-          content.innerHTML = `<div class="analysis-time">분석 시점: ${timeStr}</div>` + sanitized;
-          section.scrollIntoView({ behavior: 'smooth', block: 'start' });
-          if (currentQuote && currentIndicators) {
-            saveAnalysisToHistory(currentSymbol, currentQuote.name, currentIndicators.종합스코어, fullText);
-          }
-        } else if (msg.type === 'error') {
-          content.innerHTML = `<div class="analysis-time">분석 시점: ${timeStr}</div><p style="color:var(--up);">${escapeHtml(msg.error)}</p>`;
-        }
-      } catch {}
+      processSSELine(line);
     }
+  }
+
+  // 스트림 종료 후 버퍼에 남은 데이터 처리
+  if (buffer.trim()) processSSELine(buffer);
+
+  function processSSELine(line) {
+    if (!line.startsWith('data: ')) return;
+    try {
+      const msg = JSON.parse(line.slice(6));
+
+      if (msg.type === 'indicators' && !indicatorsReceived) {
+        indicatorsReceived = true;
+        currentIndicators = msg.indicators;
+        renderIndicators(msg.indicators);
+        renderSignalScore(msg.indicators.종합스코어);
+        showProgress('ai');
+        if (msg.indicators.지지선 || msg.indicators.저항선) {
+          renderSRLines(msg.indicators);
+        }
+      } else if (msg.type === 'chunk') {
+        fullText += msg.text;
+        const sanitized = DOMPurify.sanitize(marked.parse(fullText, { breaks: true }), SANITIZE_CONFIG);
+        content.innerHTML = `<div class="analysis-time">분석 시점: ${timeStr}</div>` + sanitized + '<span class="streaming-cursor"></span>';
+      } else if (msg.type === 'done') {
+        const sanitized = DOMPurify.sanitize(marked.parse(fullText, { breaks: true }), SANITIZE_CONFIG);
+        content.innerHTML = `<div class="analysis-time">분석 시점: ${timeStr}</div>` + sanitized;
+        section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        if (currentQuote && currentIndicators) {
+          saveAnalysisToHistory(currentSymbol, currentQuote.name, currentIndicators.종합스코어, fullText);
+        }
+      } else if (msg.type === 'error') {
+        content.innerHTML = `<div class="analysis-time">분석 시점: ${timeStr}</div><p style="color:var(--up);">${escapeHtml(msg.error)}</p>`;
+      }
+    } catch {}
   }
 }
 

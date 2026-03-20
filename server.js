@@ -13,6 +13,14 @@ app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Content-Security-Policy', [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src https://fonts.gstatic.com",
+    "img-src 'self' data:",
+    "connect-src 'self'",
+  ].join('; '));
   next();
 });
 app.use(express.static(path.join(__dirname, 'public')));
@@ -607,5 +615,9 @@ const server = app.listen(PORT, () => {
   console.log(`주식 분석기 서버 실행 중: http://localhost:${PORT}`);
   console.log('데이터 소스: Yahoo Finance');
 });
-process.on('SIGTERM', () => { server.close(); process.exit(0); });
-process.on('SIGINT', () => { server.close(); process.exit(0); });
+function gracefulShutdown() {
+  server.close(() => process.exit(0));
+  setTimeout(() => process.exit(0), 5000); // 5초 후 강제 종료
+}
+process.on('SIGTERM', gracefulShutdown);
+process.on('SIGINT', gracefulShutdown);

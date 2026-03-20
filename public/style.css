@@ -947,7 +947,7 @@ body {
 }
 
 .news-item:last-child { border-bottom: none; }
-.news-item[onclick]:hover { background: var(--dropdown-hover); border-radius: 6px; }
+.news-clickable:hover { background: var(--dropdown-hover); border-radius: 6px; }
 .news-item-title { font-size: 0.82rem; color: var(--text); font-weight: 500; line-height: 1.45; flex: 1; }
 .news-item-meta { font-size: 0.68rem; color: var(--text-muted); white-space: nowrap; text-align: right; }
 .news-item-publisher { font-weight: 600; }
