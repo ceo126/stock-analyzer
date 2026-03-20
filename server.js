@@ -33,7 +33,10 @@ const rateCleanupTimer = setInterval(() => {
     if (now - entry.start > 60000) rateMap.delete(ip);
   }
 }, 30000);
+// Rate limit 제외 경로 (정적/경량 데이터)
+const RATE_LIMIT_EXEMPT = new Set(['/api/kr-stocks', '/api/exchange-rate']);
 app.use('/api', (req, res, next) => {
+  if (RATE_LIMIT_EXEMPT.has(req.path)) return next();
   const ip = req.ip;
   const now = Date.now();
   const entry = rateMap.get(ip);
