@@ -600,7 +600,11 @@ function getMarketStatus(exchange) {
   const usOffset = isDST ? 4 : 5;
   const usH = (utcH - usOffset + 24) % 24;
   const usMin = usH * 60 + utcM;
-  return (usMin >= 570 && usMin <= 960) ? 'open' : 'closed';
+  if (['NYSE', 'NASDAQ', 'NMS', 'NYQ', 'NGM', 'PCX'].some(e => (exchange || '').toUpperCase().includes(e))) {
+    return (usMin >= 570 && usMin <= 960) ? 'open' : 'closed';
+  }
+  // 기타 시장: 알 수 없음 → closed 기본값
+  return 'closed';
 }
 
 // ==================== 메인 분석 ====================
@@ -1276,7 +1280,8 @@ function calcBBArray(data, period) {
     if (i >= period) { const old = data[i - period].close; sum -= old; sumSq -= old * old; }
     if (i >= period - 1) {
       const mean = sum / period;
-      const std = Math.sqrt(Math.max(0, sumSq / period - mean * mean));
+      const variance = sumSq / period - mean * mean;
+      const std = Math.sqrt(Math.abs(variance));
       result.push({ time: toChartTime(data[i].date), upper: mean + 2 * std, lower: mean - 2 * std });
     }
   }

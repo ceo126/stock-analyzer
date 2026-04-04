@@ -1187,7 +1187,8 @@ body {
   .chart-section, .analysis-section, .stock-header,
   .range-section, .info-table, .indicators-wrapper { break-inside: avoid; }
   .result { box-shadow: none; border: 1px solid #ddd; }
-  .hidden { display: block !important; }
+  .result > .hidden { display: block !important; }
   .result.hidden { display: block !important; }
-  .analysis-section.hidden { display: none !important; }
+  .analysis-section.hidden, .watchlist-panel.hidden, .history-panel.hidden,
+  .indicator-popup.hidden, .error.hidden { display: none !important; }
 }

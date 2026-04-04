@@ -34,7 +34,7 @@ const rateCleanupTimer = setInterval(() => {
   }
 }, 30000);
 // Rate limit 제외 경로 (정적/경량 데이터)
-const RATE_LIMIT_EXEMPT = new Set(['/api/kr-stocks', '/api/exchange-rate']);
+const RATE_LIMIT_EXEMPT = new Set(['/kr-stocks', '/exchange-rate']);
 app.use('/api', (req, res, next) => {
   if (RATE_LIMIT_EXEMPT.has(req.path)) return next();
   const ip = req.ip;
@@ -457,7 +457,7 @@ ${newsText}
     const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
     if (req.query.stream === '1') {
-      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' });
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive', 'X-Accel-Buffering': 'no' });
       let clientDisconnected = false;
       req.on('close', () => { clientDisconnected = true; });
       res.write(`data: ${JSON.stringify({ type: 'indicators', indicators })}\n\n`);
@@ -606,6 +606,11 @@ function calcSignalScore({ rsi, macd, ma5, ma20, ma60, bb, latestClose, volRatio
   return Math.max(0, Math.min(100, Math.round(score)));
 }
 
+// 존재하지 않는 API 경로 404 처리
+app.all('/api/*', (req, res) => {
+  res.status(404).json({ success: false, error: '존재하지 않는 API 경로입니다.' });
+});
+
 // 글로벌 에러 핸들러 (URIError 등)
 app.use((err, req, res, _next) => {
   if (err instanceof URIError) {
@@ -622,8 +627,8 @@ const server = app.listen(PORT, () => {
 function gracefulShutdown() {
   clearInterval(rateCleanupTimer);
   clearInterval(cacheCleanupTimer);
-  server.close(() => process.exit(0));
-  setTimeout(() => process.exit(0), 5000); // 5초 후 강제 종료
+  const forceTimer = setTimeout(() => process.exit(0), 5000);
+  server.close(() => { clearTimeout(forceTimer); process.exit(0); });
 }
 process.on('SIGTERM', gracefulShutdown);
 process.on('SIGINT', gracefulShutdown);
